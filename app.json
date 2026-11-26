@@ -2,14 +2,17 @@
   "expo": {
     "name": "GYM",
     "slug": "GYM",
+    "scheme": "gymtracker",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0E14",
     "ios": {
       "supportsTablet": true
     },
     "android": {
+      "package": "com.srajan.gymtracker",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
@@ -20,6 +23,20 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "./plugins/withGymAndroidNative"
+    ],
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "5c51eede-3719-43d0-b3f4-6aa3cf0338b3"
+      }
     }
   }
 }

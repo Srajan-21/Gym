@@ -1,0 +1,30 @@
+{
+  "cli": {
+    "version": ">= 14.0.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "preview": {
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zcjzpeyrfunpynygzssq.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_K24gT4BASl5RwNLxGwRsEA_OBj7xlRo",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "kcj86z0m",
+        "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Progress"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_SUPABASE_URL": "https://zcjzpeyrfunpynygzssq.supabase.co",
+        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "sb_publishable_K24gT4BASl5RwNLxGwRsEA_OBj7xlRo",
+        "EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME": "kcj86z0m",
+        "EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET": "Progress"
+      }
+    }
+  }
+}
