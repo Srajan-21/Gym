@@ -1,18 +1,23 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { Session, User } from '@supabase/supabase-js';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '../lib/supabase';
 
+export interface AppUser {
+  id: string;
+  phone_number: string;
+}
+
 interface AuthContextValue {
-  session: Session | null;
-  user: User | null;
+  user: AppUser | null;
   loading: boolean;
   signIn: (phone: string, password: string) => Promise<void>;
   signUp: (phone: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
+const STORAGE_KEY = 'srajans_app_user_v1';
+
 const AuthContext = createContext<AuthContextValue>({
-  session: null,
   user: null,
   loading: true,
   signIn: async () => {},
@@ -24,40 +29,48 @@ function normalizePhone(raw: string): string {
   return raw.replace(/\D/g, '');
 }
 
-function toInternalAuthEmail(digits: string): string {
-  return `srajan.${digits}@gmail.com`;
-}
-
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [user, setUser] = useState<AppUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setLoading(false);
-    });
-
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setLoading(false);
-    });
-
-    return () => {
-      listener.subscription.unsubscribe();
-    };
+    void (async () => {
+      try {
+        const raw = await AsyncStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          setUser(JSON.parse(raw) as AppUser);
+        }
+      } catch {
+        // Ignore storage read failure
+      } finally {
+        setLoading(false);
+      }
+    })();
   }, []);
+
+  const persistUser = async (nextUser: AppUser) => {
+    setUser(nextUser);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(nextUser));
+  };
 
   const signIn = async (phone: string, password: string) => {
     const digits = normalizePhone(phone);
     if (digits.length < 10) {
       throw new Error('Enter a valid 10-digit phone number.');
     }
-    const { error } = await supabase.auth.signInWithPassword({
-      email: toInternalAuthEmail(digits),
-      password,
-    });
+
+    const { data, error } = await supabase
+      .from('app_users')
+      .select('id, phone_number, password')
+      .eq('phone_number', digits)
+      .maybeSingle();
+
     if (error) throw error;
+    if (!data || data.password !== password) {
+      throw new Error('Invalid phone number or password.');
+    }
+
+    await persistUser({ id: data.id, phone_number: data.phone_number });
   };
 
   const signUp = async (phone: string, password: string) => {
@@ -65,36 +78,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (digits.length < 10) {
       throw new Error('Enter a valid 10-digit phone number.');
     }
-    const { data, error } = await supabase.auth.signUp({
-      email: toInternalAuthEmail(digits),
-      password,
-      options: {
-        data: { phone_number: digits },
-      },
-    });
-    if (error) throw error;
 
-    if (data.user) {
-      await supabase.from('user_profiles').upsert(
-        {
-          user_id: data.user.id,
-          phone_number: digits,
-        },
-        { onConflict: 'user_id' }
-      );
+    const { data: existing } = await supabase
+      .from('app_users')
+      .select('id')
+      .eq('phone_number', digits)
+      .maybeSingle();
+
+    if (existing) {
+      throw new Error('Phone number already registered. Please Sign In.');
     }
+
+    const { data, error } = await supabase
+      .from('app_users')
+      .insert({
+        phone_number: digits,
+        password,
+      })
+      .select('id, phone_number')
+      .single();
+
+    if (error) throw error;
+    await persistUser({ id: data.id, phone_number: data.phone_number });
   };
 
   const signOut = async () => {
-    const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    setUser(null);
+    await AsyncStorage.removeItem(STORAGE_KEY);
   };
 
   return (
     <AuthContext.Provider
       value={{
-        session,
-        user: session?.user ?? null,
+        user,
         loading,
         signIn,
         signUp,
