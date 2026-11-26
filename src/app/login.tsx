@@ -39,7 +39,13 @@ export default function LoginScreen() {
         await signIn(digits, password);
       }
     } catch (err) {
-      Alert.alert('Auth Error', err instanceof Error ? err.message : 'Could not authenticate.');
+      const msg =
+        err instanceof Error
+          ? err.message
+          : typeof err === 'object' && err !== null && 'message' in err
+            ? String((err as { message: unknown }).message)
+            : 'Could not authenticate.';
+      Alert.alert('Auth Error', msg);
     } finally {
       setSubmitting(false);
     }

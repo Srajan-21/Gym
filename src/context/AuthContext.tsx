@@ -65,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .eq('phone_number', digits)
       .maybeSingle();
 
-    if (error) throw error;
+    if (error) throw new Error(error.message);
     if (!data || data.password !== password) {
       throw new Error('Invalid phone number or password.');
     }
@@ -98,7 +98,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       .select('id, phone_number')
       .single();
 
-    if (error) throw error;
+    if (error) throw new Error(error.message);
     await persistUser({ id: data.id, phone_number: data.phone_number });
   };
 
