@@ -16,27 +16,27 @@ import { Colors } from '../theme/colors';
 
 export default function LoginScreen() {
   const { signIn, signUp } = useAuth();
-  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const handleSubmit = async () => {
-    if (!email.trim() || password.length < 6) {
-      Alert.alert('Invalid Input', 'Enter a valid email and a password of at least 6 characters.');
+    const digits = phone.replace(/\D/g, '');
+    if (digits.length < 10 || password.length < 6) {
+      Alert.alert(
+        'Invalid Input',
+        'Enter a valid phone number (at least 10 digits) and a password of at least 6 characters.'
+      );
       return;
     }
 
     setSubmitting(true);
     try {
       if (isSignUp) {
-        await signUp(email.trim(), password);
-        Alert.alert(
-          'Account Created',
-          'If email confirmation is enabled in Supabase, check your inbox. Otherwise, sign in now.'
-        );
+        await signUp(digits, password);
       } else {
-        await signIn(email.trim(), password);
+        await signIn(digits, password);
       }
     } catch (err) {
       Alert.alert('Auth Error', err instanceof Error ? err.message : 'Could not authenticate.');
@@ -57,17 +57,18 @@ export default function LoginScreen() {
         <Text style={styles.brandKicker}>PERSONAL PERFORMANCE</Text>
         <Text style={styles.title}>Srajan&apos;s</Text>
         <Text style={styles.subtitle}>
-          {isSignUp ? 'Create your private training vault' : 'Sign in to sync your training & diet'}
+          {isSignUp
+            ? 'Create your account with phone & password'
+            : 'Sign in with your phone number'}
         </Text>
 
         <TextInput
           style={styles.input}
-          placeholder="Email"
+          placeholder="Phone Number (e.g. 9876543210)"
           placeholderTextColor={Colors.textMuted}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          value={email}
-          onChangeText={setEmail}
+          keyboardType="phone-pad"
+          value={phone}
+          onChangeText={setPhone}
         />
         <TextInput
           style={styles.input}
@@ -84,7 +85,7 @@ export default function LoginScreen() {
           disabled={submitting}
         >
           {submitting ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={Colors.primaryText} />
           ) : (
             <Text style={styles.buttonText}>{isSignUp ? 'Create Account' : 'Sign In'}</Text>
           )}
@@ -92,7 +93,7 @@ export default function LoginScreen() {
 
         <Pressable style={styles.switchBtn} onPress={() => setIsSignUp((v) => !v)}>
           <Text style={styles.switchText}>
-            {isSignUp ? 'Already have an account? Sign In' : 'First time here? Create Account'}
+            {isSignUp ? 'Already have an account? Sign In' : 'New here? Create Account'}
           </Text>
         </Pressable>
       </View>
@@ -109,7 +110,7 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.surface,
-    borderRadius: 20,
+    borderRadius: 22,
     padding: 24,
     borderWidth: 1,
     borderColor: Colors.border,
@@ -177,5 +178,6 @@ const styles = StyleSheet.create({
   switchText: {
     color: Colors.primary,
     fontSize: 14,
+    fontWeight: '600',
   },
 });

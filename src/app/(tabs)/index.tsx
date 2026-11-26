@@ -154,7 +154,9 @@ export default function TodayScreen() {
         <View>
           <Text style={styles.kicker}>SRAJAN&apos;S • {FULL_DAY_NAMES[dayIndex]}</Text>
           <Text style={styles.title}>{formatReadableDate(selectedDate)}</Text>
-          <Text style={styles.sub}>{user?.email}</Text>
+          <Text style={styles.sub}>
+            {(user?.user_metadata?.phone_number as string | undefined) ?? ''}
+          </Text>
         </View>
         <Pressable style={styles.signOutBtn} onPress={signOut}>
           <LogOut size={18} color={Colors.textSecondary} />

@@ -6,8 +6,8 @@ interface AuthContextValue {
   session: Session | null;
   user: User | null;
   loading: boolean;
-  signIn: (email: string, password: string) => Promise<void>;
-  signUp: (email: string, password: string) => Promise<void>;
+  signIn: (phone: string, password: string) => Promise<void>;
+  signUp: (phone: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -19,6 +19,14 @@ const AuthContext = createContext<AuthContextValue>({
   signUp: async () => {},
   signOut: async () => {},
 });
+
+function normalizePhone(raw: string): string {
+  return raw.replace(/\D/g, '');
+}
+
+function toInternalAuthEmail(digits: string): string {
+  return `u${digits}@srajans.app`;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -40,14 +48,41 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const signIn = async (phone: string, password: string) => {
+    const digits = normalizePhone(phone);
+    if (digits.length < 10) {
+      throw new Error('Enter a valid 10-digit phone number.');
+    }
+    const { error } = await supabase.auth.signInWithPassword({
+      email: toInternalAuthEmail(digits),
+      password,
+    });
     if (error) throw error;
   };
 
-  const signUp = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password });
+  const signUp = async (phone: string, password: string) => {
+    const digits = normalizePhone(phone);
+    if (digits.length < 10) {
+      throw new Error('Enter a valid 10-digit phone number.');
+    }
+    const { data, error } = await supabase.auth.signUp({
+      email: toInternalAuthEmail(digits),
+      password,
+      options: {
+        data: { phone_number: digits },
+      },
+    });
     if (error) throw error;
+
+    if (data.user) {
+      await supabase.from('user_profiles').upsert(
+        {
+          user_id: data.user.id,
+          phone_number: digits,
+        },
+        { onConflict: 'user_id' }
+      );
+    }
   };
 
   const signOut = async () => {
