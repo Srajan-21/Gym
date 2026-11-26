@@ -28,6 +28,12 @@
       "expo-router",
       "./plugins/withGymAndroidNative"
     ],
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/5c51eede-3719-43d0-b3f4-6aa3cf0338b3"
+    },
     "extra": {
       "router": {
         "asyncRoutes": {

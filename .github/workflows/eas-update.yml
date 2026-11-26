@@ -1,0 +1,43 @@
+name: EAS OTA Update
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  ota-update:
+    name: Publish OTA Update to Preview Channel
+    runs-on: ubuntu-latest
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://zcjzpeyrfunpynygzssq.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: sb_publishable_K24gT4BASl5RwNLxGwRsEA_OBj7xlRo
+      EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME: kcj86z0m
+      EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET: Progress
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Setup Expo & EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npx expo lint
+
+      - name: Publish EAS Update
+        run: eas update --branch preview --message "${{ github.event.head_commit.message }}" --non-interactive
