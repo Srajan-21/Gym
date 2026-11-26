@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Bookmark, Calculator, Flame, Settings, Trash2, X } from 'lucide-react-native';
+import { DateStrip } from '../../components/DateStrip';
 import { MessLoggerModal } from '../../components/MessLoggerModal';
 import { RecipeBuilderModal } from '../../components/RecipeBuilderModal';
 import { useDiet } from '../../hooks/useDiet';
@@ -77,6 +78,8 @@ export default function DietScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <DateStrip />
+
       {/* Macro Progress Card */}
       <View style={styles.card}>
         <View style={styles.rowBetween}>
@@ -335,8 +338,8 @@ const styles = StyleSheet.create({
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   rowGap: { flexDirection: 'row', gap: 10 },
   rowGapSmall: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  kicker: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
-  calHeadline: { color: Colors.text, fontSize: 24, fontWeight: '700' },
+  kicker: { color: Colors.gold, fontSize: 11, fontWeight: '700', letterSpacing: 1.4 },
+  calHeadline: { color: Colors.text, fontSize: 26, fontWeight: '800', fontVariant: ['tabular-nums'] },
   calTarget: { color: Colors.textSecondary, fontSize: 15, fontWeight: '500' },
   iconBtn: {
     padding: 8,

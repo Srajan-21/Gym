@@ -25,7 +25,13 @@ import {
   Moon,
   Plus,
 } from 'lucide-react-native';
+import { DateStrip } from '../../components/DateStrip';
 import { useAuth } from '../../context/AuthContext';
+import {
+  formatReadableDate,
+  getDayOfWeekFromDate,
+  useSelectedDate,
+} from '../../context/DateContext';
 import { useDailyHabits } from '../../hooks/useDailyHabits';
 import { useDiet } from '../../hooks/useDiet';
 import { FULL_DAY_NAMES, useSplit } from '../../hooks/useSplit';
@@ -39,9 +45,10 @@ const POSE_TAGS: PoseTag[] = ['front', 'side', 'back', 'pump'];
 export default function TodayScreen() {
   const { user, signOut } = useAuth();
   const router = useRouter();
-  const todayIndex = new Date().getDay();
+  const { selectedDate } = useSelectedDate();
+  const dayIndex = getDayOfWeekFromDate(selectedDate);
   const { splitsByDay } = useSplit();
-  const todaySplit = splitsByDay[todayIndex];
+  const todaySplit = splitsByDay[dayIndex];
 
   const { dailyTotals, goals } = useDiet();
   const {
@@ -145,14 +152,16 @@ export default function TodayScreen() {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.kicker}>{FULL_DAY_NAMES[todayIndex]}</Text>
-          <Text style={styles.title}>Today&apos;s Dashboard</Text>
+          <Text style={styles.kicker}>SRAJAN&apos;S • {FULL_DAY_NAMES[dayIndex]}</Text>
+          <Text style={styles.title}>{formatReadableDate(selectedDate)}</Text>
           <Text style={styles.sub}>{user?.email}</Text>
         </View>
         <Pressable style={styles.signOutBtn} onPress={signOut}>
           <LogOut size={18} color={Colors.textSecondary} />
         </Pressable>
       </View>
+
+      <DateStrip />
 
       {/* Today's Split */}
       <View style={styles.card}>
@@ -356,8 +365,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
   header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  kicker: { color: Colors.primary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  title: { color: Colors.text, fontSize: 24, fontWeight: '700' },
+  kicker: { color: Colors.gold, fontSize: 11, fontWeight: '700', letterSpacing: 1.4, textTransform: 'uppercase' },
+  title: { color: Colors.text, fontSize: 26, fontWeight: '800', letterSpacing: 0.2 },
   sub: { color: Colors.textMuted, fontSize: 12, marginTop: 2 },
   signOutBtn: {
     padding: 10,

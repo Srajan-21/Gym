@@ -13,18 +13,23 @@ export default function TabsLayout() {
         tabBarStyle: {
           backgroundColor: Colors.surface,
           borderTopColor: Colors.border,
-          height: 62,
-          paddingBottom: 8,
-          paddingTop: 6,
+          height: 66,
+          paddingBottom: 10,
+          paddingTop: 8,
         },
-        tabBarActiveTintColor: Colors.primary,
+        tabBarActiveTintColor: Colors.gold,
         tabBarInactiveTintColor: Colors.textMuted,
+        headerTitleStyle: {
+          fontWeight: '700',
+          letterSpacing: 0.3,
+        },
       }}
     >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Today',
+          title: "Srajan's",
+          tabBarLabel: 'Daily',
           tabBarIcon: ({ color, size }) => <Home size={size} color={color} />,
         }}
       />

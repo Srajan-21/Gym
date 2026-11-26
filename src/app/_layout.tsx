@@ -3,6 +3,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AuthProvider, useAuth } from '../context/AuthContext';
+import { DateProvider } from '../context/DateContext';
 import { Colors } from '../theme/colors';
 
 function RootNavigator() {
@@ -63,7 +64,9 @@ function RootNavigator() {
 export default function RootLayout() {
   return (
     <AuthProvider>
-      <RootNavigator />
+      <DateProvider>
+        <RootNavigator />
+      </DateProvider>
     </AuthProvider>
   );
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { getCachedJson, getTodayDateString, setCachedJson } from '../lib/storage';
+import { useSelectedDate } from '../context/DateContext';
+import { getCachedJson, setCachedJson } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import {
   EffortLevel,
@@ -28,7 +29,7 @@ export interface PreviousSetSummary {
 
 export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
   const { user } = useAuth();
-  const today = getTodayDateString();
+  const { selectedDate: today } = useSelectedDate();
   const cacheKey = `gym_workout_${today}_v1`;
 
   const [session, setSession] = useState<WorkoutSession | null>(null);

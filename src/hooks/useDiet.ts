@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useSelectedDate } from '../context/DateContext';
 import { calculateIngredientMacros, MacroTotals, sumMacros } from '../lib/nutrition';
-import { getCachedJson, getTodayDateString, setCachedJson } from '../lib/storage';
+import { getCachedJson, setCachedJson } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import {
   FoodLog,
@@ -32,7 +33,7 @@ const DEFAULT_GOALS: Omit<UserGoals, 'id' | 'user_id' | 'updated_at'> = {
 
 export function useDiet() {
   const { user } = useAuth();
-  const today = getTodayDateString();
+  const { selectedDate: today } = useSelectedDate();
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { useSelectedDate } from '../context/DateContext';
 import { uploadProgressPhoto } from '../lib/cloudinary';
-import { getCachedJson, getTodayDateString, setCachedJson } from '../lib/storage';
+import { getCachedJson, setCachedJson } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { DailyLog, PoseTag, ProgressPhoto } from '../types/database';
 
 export function useDailyHabits() {
   const { user } = useAuth();
-  const today = getTodayDateString();
+  const { selectedDate: today } = useSelectedDate();
   const cacheKey = `gym_daily_log_${today}_v1`;
 
   const [dailyLog, setDailyLog] = useState<DailyLog | null>(null);

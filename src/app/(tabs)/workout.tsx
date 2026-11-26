@@ -24,6 +24,12 @@ import {
   Trash2,
   X,
 } from 'lucide-react-native';
+import { DateStrip } from '../../components/DateStrip';
+import {
+  formatReadableDate,
+  getDayOfWeekFromDate,
+  useSelectedDate,
+} from '../../context/DateContext';
 import { FULL_DAY_NAMES, useSplit } from '../../hooks/useSplit';
 import { useWorkoutSession } from '../../hooks/useWorkoutSession';
 import { GymAndroidNative } from '../../native/GymAndroidNative';
@@ -46,7 +52,8 @@ const EFFORT_LEVELS: { value: EffortLevel; label: string }[] = [
 
 export default function WorkoutScreen() {
   const router = useRouter();
-  const todayIndex = new Date().getDay();
+  const { selectedDate } = useSelectedDate();
+  const todayIndex = getDayOfWeekFromDate(selectedDate);
   const { splitsByDay, exercises: allExercises } = useSplit();
   const todaySplit = splitsByDay[todayIndex];
 
@@ -218,10 +225,14 @@ export default function WorkoutScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <DateStrip />
+
       {/* Header & Split Shortcut */}
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.dayLabel}>{FULL_DAY_NAMES[todayIndex]}</Text>
+          <Text style={styles.dayLabel}>
+            {formatReadableDate(selectedDate)} • {FULL_DAY_NAMES[todayIndex]}
+          </Text>
           <Text style={styles.title}>
             {todaySplit?.split.split_name ?? 'No Split Planned'}
           </Text>
@@ -541,8 +552,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
   headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  dayLabel: { color: Colors.primary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
-  title: { color: Colors.text, fontSize: 22, fontWeight: '700', marginTop: 2 },
+  dayLabel: { color: Colors.gold, fontSize: 11, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
+  title: { color: Colors.text, fontSize: 22, fontWeight: '800', marginTop: 2 },
   outlineBtn: {
     flexDirection: 'row',
     alignItems: 'center',

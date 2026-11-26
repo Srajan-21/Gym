@@ -1,19 +1,30 @@
 export const Colors = {
-  bg: '#0B0E14',
-  surface: '#141923',
-  surfaceElevated: '#1C2331',
-  border: '#262F40',
+  // Deep Obsidian & Charcoal Surfaces
+  bg: '#07090D',
+  surface: '#10141D',
+  surfaceElevated: '#171D2B',
+  surfaceGlass: 'rgba(23, 29, 43, 0.85)',
+  border: '#1F2839',
+  borderSubtle: '#171E2C',
+
+  // Typography
   text: '#F8FAFC',
-  textSecondary: '#94A3B8',
-  textMuted: '#64748B',
-  primary: '#3B82F6',
-  primarySoft: 'rgba(59, 130, 246, 0.16)',
-  success: '#22C55E',
-  successSoft: 'rgba(34, 197, 94, 0.16)',
+  textSecondary: '#9CA8BD',
+  textMuted: '#616E85',
+
+  // Luxury Champagne Gold + Crisp Accents
+  gold: '#E5C07B',
+  goldSoft: 'rgba(229, 192, 123, 0.14)',
+  goldBorder: 'rgba(229, 192, 123, 0.32)',
+
+  primary: '#4F8EF7',
+  primarySoft: 'rgba(79, 142, 247, 0.15)',
+  success: '#10B981',
+  successSoft: 'rgba(16, 185, 129, 0.15)',
   amber: '#F59E0B',
-  amberSoft: 'rgba(245, 158, 11, 0.16)',
-  danger: '#EF4444',
-  dangerSoft: 'rgba(239, 68, 68, 0.16)',
-  purple: '#A855F7',
-  purpleSoft: 'rgba(168, 85, 247, 0.16)',
+  amberSoft: 'rgba(245, 158, 11, 0.15)',
+  danger: '#F43F5E',
+  dangerSoft: 'rgba(244, 63, 94, 0.15)',
+  purple: '#A78BFA',
+  purpleSoft: 'rgba(167, 139, 250, 0.15)',
 };

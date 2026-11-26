@@ -52,11 +52,12 @@ export default function LoginScreen() {
     >
       <View style={styles.card}>
         <View style={styles.iconBox}>
-          <Dumbbell size={32} color={Colors.primary} />
+          <Dumbbell size={30} color={Colors.gold} />
         </View>
-        <Text style={styles.title}>GYM & Diet Tracker</Text>
+        <Text style={styles.brandKicker}>PERSONAL PERFORMANCE</Text>
+        <Text style={styles.title}>Srajan&apos;s</Text>
         <Text style={styles.subtitle}>
-          {isSignUp ? 'Create your personal account' : 'Sign in to sync with Supabase'}
+          {isSignUp ? 'Create your private training vault' : 'Sign in to sync your training & diet'}
         </Text>
 
         <TextInput
@@ -114,18 +115,28 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   iconBox: {
-    width: 56,
-    height: 56,
-    borderRadius: 16,
-    backgroundColor: Colors.primarySoft,
+    width: 58,
+    height: 58,
+    borderRadius: 18,
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 16,
   },
+  brandKicker: {
+    color: Colors.gold,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 1.8,
+    marginBottom: 4,
+  },
   title: {
     color: Colors.text,
-    fontSize: 24,
-    fontWeight: '700',
+    fontSize: 28,
+    fontWeight: '800',
+    letterSpacing: 0.3,
   },
   subtitle: {
     color: Colors.textSecondary,
