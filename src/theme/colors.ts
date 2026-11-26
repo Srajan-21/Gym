@@ -1,33 +1,34 @@
 export const Colors = {
-  // Smoked Onyx & Matte Carbon Surfaces (Warm Luxury Dark, not Tailwind Slate)
-  bg: '#08080A',
-  surface: '#111115',
-  surfaceElevated: '#191920',
-  surfaceGlass: 'rgba(25, 25, 32, 0.88)',
-  border: '#26252D',
-  borderSubtle: '#1A1920',
+  // Warm Alabaster & Porcelain Editorial Surfaces
+  bg: '#F7F5F0',
+  surface: '#FFFFFF',
+  surfaceElevated: '#EFECE5',
+  surfaceGlass: 'rgba(255, 255, 255, 0.92)',
+  border: '#E5E0D5',
+  borderSubtle: '#EDE9E0',
 
-  // Warm Ivory & Stone Typography
-  text: '#F5F2EB',
-  textSecondary: '#A8A29E',
-  textMuted: '#635F5B',
+  // Deep Espresso & Warm Taupe Typography
+  text: '#1A1917',
+  textSecondary: '#6B665E',
+  textMuted: '#9E988E',
 
-  // Burnished Champagne Gold (Primary Luxury Brand Accent)
-  primary: '#D9B86C',
-  primaryText: '#08080A',
-  primarySoft: 'rgba(217, 184, 108, 0.14)',
+  // Deep Botanical Forest (Primary Luxury Accent)
+  primary: '#1F4D3D',
+  primaryText: '#FFFFFF',
+  primarySoft: 'rgba(31, 77, 61, 0.10)',
 
-  gold: '#D9B86C',
-  goldSoft: 'rgba(217, 184, 108, 0.14)',
-  goldBorder: 'rgba(217, 184, 108, 0.35)',
+  // Semantic Highlight Token (mapped to Deep Forest for consistent accents)
+  gold: '#1F4D3D',
+  goldSoft: 'rgba(31, 77, 61, 0.10)',
+  goldBorder: 'rgba(31, 77, 61, 0.25)',
 
-  // Curated Muted Jewel Accents
-  success: '#4E9F76',
-  successSoft: 'rgba(78, 159, 118, 0.15)',
-  amber: '#C98A4B',
-  amberSoft: 'rgba(201, 138, 75, 0.15)',
-  danger: '#C85A5A',
-  dangerSoft: 'rgba(200, 90, 90, 0.15)',
-  purple: '#9D84B7',
-  purpleSoft: 'rgba(157, 132, 183, 0.15)',
+  // Curated Muted Editorial Accents
+  success: '#2E6F56',
+  successSoft: 'rgba(46, 111, 86, 0.12)',
+  amber: '#B4693E',
+  amberSoft: 'rgba(180, 105, 62, 0.12)',
+  danger: '#B84343',
+  dangerSoft: 'rgba(184, 67, 67, 0.12)',
+  purple: '#6D5D7E',
+  purpleSoft: 'rgba(109, 93, 126, 0.12)',
 };
