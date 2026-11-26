@@ -25,7 +25,7 @@ function normalizePhone(raw: string): string {
 }
 
 function toInternalAuthEmail(digits: string): string {
-  return `u${digits}@srajans.app`;
+  return `srajan.${digits}@gmail.com`;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
