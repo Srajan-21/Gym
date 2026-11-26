@@ -250,7 +250,7 @@ export function RecipeBuilderModal({
                     placeholderTextColor={Colors.textMuted}
                   />
                   <Pressable style={styles.addBtn} onPress={handleAddItem}>
-                    <Plus size={16} color="#fff" />
+                    <Plus size={16} color={Colors.primaryText} />
                     <Text style={styles.addBtnText}>Add</Text>
                   </Pressable>
                 </View>
@@ -432,7 +432,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
-  addBtnText: { color: '#fff', fontWeight: '700', fontSize: 13 },
+  addBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 13 },
   searchBox: { gap: 8 },
   customBox: {
     backgroundColor: Colors.surfaceElevated,
@@ -454,7 +454,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  primaryBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 14 },
   secondaryBtn: {
     borderWidth: 1,
     borderColor: Colors.primary,

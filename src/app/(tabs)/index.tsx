@@ -174,7 +174,7 @@ export default function TodayScreen() {
             style={[styles.primaryBtn, { flex: 1 }]}
             onPress={() => router.push('/(tabs)/workout')}
           >
-            <Dumbbell size={16} color="#fff" />
+            <Dumbbell size={16} color={Colors.primaryText} />
             <Text style={styles.btnText}>Open Workout</Text>
           </Pressable>
           <Pressable style={styles.outlineBtn} onPress={() => router.push('/split-planner')}>
@@ -401,7 +401,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  btnText: { color: '#fff', fontWeight: '600', fontSize: 14 },
+  btnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 14 },
   outlineBtn: {
     borderWidth: 1,
     borderColor: Colors.primary,

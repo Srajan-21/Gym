@@ -238,7 +238,7 @@ const styles = StyleSheet.create({
     paddingVertical: 13,
     alignItems: 'center',
   },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  primaryBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 15 },
   dishRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',

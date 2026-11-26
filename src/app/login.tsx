@@ -166,9 +166,9 @@ const styles = StyleSheet.create({
     opacity: 0.6,
   },
   buttonText: {
-    color: '#fff',
+    color: Colors.primaryText,
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   switchBtn: {
     marginTop: 18,

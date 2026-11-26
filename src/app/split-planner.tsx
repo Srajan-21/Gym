@@ -174,7 +174,7 @@ export default function SplitPlannerScreen() {
             <View style={styles.rowBetween}>
               <Text style={styles.sectionTitle}>Planned Exercises</Text>
               <Pressable style={styles.addBtn} onPress={() => setPickerOpen(true)}>
-                <Plus size={16} color="#fff" />
+                <Plus size={16} color={Colors.primaryText} />
                 <Text style={styles.addBtnText}>Add</Text>
               </Pressable>
             </View>
@@ -385,7 +385,7 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
   },
-  primaryBtnText: { color: '#fff', fontWeight: '600', fontSize: 15 },
+  primaryBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 15 },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     borderRadius: 8,
   },
-  addBtnText: { color: '#fff', fontWeight: '600', fontSize: 13 },
+  addBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 13 },
   emptyText: { color: Colors.textMuted, fontSize: 13, lineHeight: 20 },
   exerciseRow: {
     flexDirection: 'row',

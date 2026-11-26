@@ -169,8 +169,8 @@ export default function DietScreen() {
       {/* Action Buttons: Ingredient/Oil Calc & Mess Oil Slider */}
       <View style={styles.rowGap}>
         <Pressable style={[styles.actionBtn, { backgroundColor: Colors.primary }]} onPress={() => setRecipeOpen(true)}>
-          <Calculator size={17} color="#fff" />
-          <Text style={styles.actionText}>Ingredient & Oil Calc</Text>
+          <Calculator size={17} color={Colors.primaryText} />
+          <Text style={[styles.actionText, { color: Colors.primaryText }]}>Ingredient & Oil Calc</Text>
         </Pressable>
         <Pressable style={[styles.actionBtn, { backgroundColor: Colors.surfaceElevated, borderWidth: 1, borderColor: Colors.amber }]} onPress={() => setMessOpen(true)}>
           <Flame size={17} color={Colors.amber} />
@@ -315,7 +315,7 @@ export default function DietScreen() {
               </View>
             </View>
             <Pressable style={styles.saveGoalsBtn} onPress={handleSaveGoals}>
-              <Text style={styles.actionText}>Save Targets</Text>
+              <Text style={[styles.actionText, { color: Colors.primaryText }]}>Save Targets</Text>
             </Pressable>
           </View>
         </View>

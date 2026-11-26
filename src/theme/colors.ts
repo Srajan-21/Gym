@@ -1,30 +1,33 @@
 export const Colors = {
-  // Deep Obsidian & Charcoal Surfaces
-  bg: '#07090D',
-  surface: '#10141D',
-  surfaceElevated: '#171D2B',
-  surfaceGlass: 'rgba(23, 29, 43, 0.85)',
-  border: '#1F2839',
-  borderSubtle: '#171E2C',
+  // Smoked Onyx & Matte Carbon Surfaces (Warm Luxury Dark, not Tailwind Slate)
+  bg: '#08080A',
+  surface: '#111115',
+  surfaceElevated: '#191920',
+  surfaceGlass: 'rgba(25, 25, 32, 0.88)',
+  border: '#26252D',
+  borderSubtle: '#1A1920',
 
-  // Typography
-  text: '#F8FAFC',
-  textSecondary: '#9CA8BD',
-  textMuted: '#616E85',
+  // Warm Ivory & Stone Typography
+  text: '#F5F2EB',
+  textSecondary: '#A8A29E',
+  textMuted: '#635F5B',
 
-  // Luxury Champagne Gold + Crisp Accents
-  gold: '#E5C07B',
-  goldSoft: 'rgba(229, 192, 123, 0.14)',
-  goldBorder: 'rgba(229, 192, 123, 0.32)',
+  // Burnished Champagne Gold (Primary Luxury Brand Accent)
+  primary: '#D9B86C',
+  primaryText: '#08080A',
+  primarySoft: 'rgba(217, 184, 108, 0.14)',
 
-  primary: '#4F8EF7',
-  primarySoft: 'rgba(79, 142, 247, 0.15)',
-  success: '#10B981',
-  successSoft: 'rgba(16, 185, 129, 0.15)',
-  amber: '#F59E0B',
-  amberSoft: 'rgba(245, 158, 11, 0.15)',
-  danger: '#F43F5E',
-  dangerSoft: 'rgba(244, 63, 94, 0.15)',
-  purple: '#A78BFA',
-  purpleSoft: 'rgba(167, 139, 250, 0.15)',
+  gold: '#D9B86C',
+  goldSoft: 'rgba(217, 184, 108, 0.14)',
+  goldBorder: 'rgba(217, 184, 108, 0.35)',
+
+  // Curated Muted Jewel Accents
+  success: '#4E9F76',
+  successSoft: 'rgba(78, 159, 118, 0.15)',
+  amber: '#C98A4B',
+  amberSoft: 'rgba(201, 138, 75, 0.15)',
+  danger: '#C85A5A',
+  dangerSoft: 'rgba(200, 90, 90, 0.15)',
+  purple: '#9D84B7',
+  purpleSoft: 'rgba(157, 132, 183, 0.15)',
 };

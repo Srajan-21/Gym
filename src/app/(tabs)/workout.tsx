@@ -312,7 +312,7 @@ export default function WorkoutScreen() {
               : 'No split exercises planned for today. Start a freestyle session or edit your weekly split.'}
           </Text>
           <Pressable style={styles.primaryBtn} onPress={startTodayWorkout}>
-            <Play size={18} color="#fff" />
+            <Play size={18} color={Colors.primaryText} />
             <Text style={styles.primaryBtnText}>Start Today&apos;s Workout</Text>
           </Pressable>
         </View>
@@ -463,7 +463,7 @@ export default function WorkoutScreen() {
                           style={[styles.primaryBtn, { flex: 1 }]}
                           onPress={() => handleLogSet(se.exercise_id)}
                         >
-                          <Plus size={16} color="#fff" />
+                          <Plus size={16} color={Colors.primaryText} />
                           <Text style={styles.primaryBtnText}>Log Set</Text>
                         </Pressable>
 
@@ -609,7 +609,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
-  primaryBtnText: { color: '#fff', fontWeight: '700', fontSize: 14 },
+  primaryBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 14 },
   sectionHeader: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700' },
   linkBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   linkBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
