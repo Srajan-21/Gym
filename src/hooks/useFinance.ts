@@ -9,10 +9,11 @@ export type PaymentMode = 'UPI' | 'Cash' | 'Card';
 export const EXPENSE_CATEGORIES = [
   'Food / Mess',
   'Coffee / Chai',
-  'Gym / Supp',
-  'Travel / Auto',
-  'Shopping',
+  'Rent',
   'Bills',
+  'Travel / Auto',
+  'Gym / Supp',
+  'Shopping',
   'Other',
 ] as const;
 
@@ -402,6 +403,53 @@ export function useFinance() {
     [transactions]
   );
 
+  const getPeriodReport = useCallback(
+    (startDate: string, endDate: string) => {
+      const periodTx = transactions.filter(
+        (t) => t.date >= startDate && t.date <= endDate
+      );
+      let totalSpent = 0;
+      let totalIncome = 0;
+      let totalLent = 0;
+      let totalReceived = 0;
+
+      const categoryTotals: Record<string, number> = {};
+      const modeTotals: Record<PaymentMode, number> = { UPI: 0, Cash: 0, Card: 0 };
+
+      for (const t of periodTx) {
+        if (t.type === 'expense') {
+          totalSpent += t.amount;
+          categoryTotals[t.category] = (categoryTotals[t.category] ?? 0) + t.amount;
+          modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
+        } else if (t.type === 'income') {
+          totalIncome += t.amount;
+        } else if (t.type === 'lent') {
+          totalLent += t.amount;
+          modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
+        } else if (t.type === 'received') {
+          totalReceived += t.amount;
+        }
+      }
+
+      const categoryBreakdown = Object.entries(categoryTotals)
+        .map(([category, amount]) => ({ category, amount }))
+        .sort((a, b) => b.amount - a.amount);
+
+      const sortedTx = [...periodTx].sort((a, b) => b.date.localeCompare(a.date));
+
+      return {
+        transactions: sortedTx,
+        totalSpent: Math.round(totalSpent * 100) / 100,
+        totalIncome: Math.round(totalIncome * 100) / 100,
+        totalLent: Math.round(totalLent * 100) / 100,
+        totalReceived: Math.round(totalReceived * 100) / 100,
+        categoryBreakdown,
+        modeTotals,
+      };
+    },
+    [transactions]
+  );
+
   const currentMonth = getTodayDateString().slice(0, 7);
 
   const monthStats = useMemo(() => {
@@ -486,6 +534,7 @@ export function useFinance() {
     addAccount,
     updateAccountBalance,
     getAccountBalanceAsOf,
+    getPeriodReport,
     addTransaction,
     addSplitTransaction,
     deleteTransaction,

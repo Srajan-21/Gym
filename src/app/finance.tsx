@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Alert,
   Modal,
@@ -13,10 +13,12 @@ import * as Haptics from 'expo-haptics';
 import {
   ArrowDownLeft,
   ArrowUpRight,
+  Calendar,
   Check,
+  ChevronLeft,
+  ChevronRight,
   PieChart,
   Plus,
-  Settings,
   Trash2,
   Users,
   Wallet,
@@ -24,16 +26,19 @@ import {
 } from 'lucide-react-native';
 import Svg, { Circle, G } from 'react-native-svg';
 import { DateStrip } from '../components/DateStrip';
-import { formatReadableDate, useSelectedDate } from '../context/DateContext';
+import { addDays, formatReadableDate, useSelectedDate } from '../context/DateContext';
 import {
   EXPENSE_CATEGORIES,
   PaymentMode,
   TxType,
   useFinance,
 } from '../hooks/useFinance';
+import { getWeekKey } from '../hooks/useDiet';
+import { getTodayDateString } from '../lib/storage';
 import { Colors } from '../theme/colors';
 
 type QuickMode = TxType | 'split';
+type ReportPeriod = 'daily' | 'weekly' | 'monthly';
 
 const QUICK_AMOUNTS = [50, 100, 200, 500, 1000];
 const PAYMENT_MODES: PaymentMode[] = ['UPI', 'Cash', 'Card'];
@@ -53,26 +58,50 @@ const PIE_COLORS = [
   '#3B6E8C',
   '#9C7A3C',
   '#B84343',
+  '#5C7A52',
 ];
+
+function formatShortDate(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
+  return new Date(y, m - 1, d).toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'short',
+  });
+}
+
+function getMonthRange(todayStr: string, monthOffset: number) {
+  const [y, m] = todayStr.split('-').map((n) => parseInt(n, 10));
+  const dt = new Date(y, m - 1 + monthOffset, 1);
+  const yy = dt.getFullYear();
+  const mm = dt.getMonth() + 1;
+  const lastDay = new Date(yy, mm, 0).getDate();
+  const mmStr = String(mm).padStart(2, '0');
+  return {
+    startDate: `${yy}-${mmStr}-01`,
+    endDate: `${yy}-${mmStr}-${String(lastDay).padStart(2, '0')}`,
+    label: dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+  };
+}
 
 export default function FinanceScreen() {
   const { selectedDate } = useSelectedDate();
+  const todayStr = getTodayDateString();
   const {
     accounts,
-    transactions,
-    monthlyBudget,
-    monthStats,
     peopleBalances,
     knownPeople,
     addAccount,
     updateAccountBalance,
     getAccountBalanceAsOf,
+    getPeriodReport,
     addTransaction,
     addSplitTransaction,
     deleteTransaction,
-    updateBudget,
   } = useFinance();
 
+  const [reportPeriod, setReportPeriod] = useState<ReportPeriod>('daily');
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [monthOffset, setMonthOffset] = useState(0);
   const [subTab, setSubTab] = useState<'ledger' | 'people' | 'stats'>('ledger');
 
   // Quick-Add state
@@ -87,9 +116,7 @@ export default function FinanceScreen() {
   const [splitIncludeSelf, setSplitIncludeSelf] = useState(true);
   const [splitNewPerson, setSplitNewPerson] = useState('');
 
-  // Budget & Account modals
-  const [budgetModalOpen, setBudgetModalOpen] = useState(false);
-  const [budgetDraft, setBudgetDraft] = useState(String(monthlyBudget));
+  // Account modal
   const [accountModalOpen, setAccountModalOpen] = useState(false);
   const [newAccName, setNewAccName] = useState('');
   const [newAccBalance, setNewAccBalance] = useState('');
@@ -104,6 +131,28 @@ export default function FinanceScreen() {
   const totalLeftAsOfDate = hasAnyBalanceData
     ? accountBalancesForDate.reduce<number>((sum, b) => sum + (b ?? 0), 0)
     : null;
+
+  const weekRange = useMemo(() => {
+    const start = addDays(getWeekKey(todayStr), weekOffset * 7);
+    return { startDate: start, endDate: addDays(start, 6) };
+  }, [todayStr, weekOffset]);
+
+  const monthRange = useMemo(
+    () => getMonthRange(todayStr, monthOffset),
+    [monthOffset, todayStr]
+  );
+
+  const activeRange =
+    reportPeriod === 'daily'
+      ? { startDate: selectedDate, endDate: selectedDate }
+      : reportPeriod === 'weekly'
+        ? weekRange
+        : { startDate: monthRange.startDate, endDate: monthRange.endDate };
+
+  const periodReport = useMemo(
+    () => getPeriodReport(activeRange.startDate, activeRange.endDate),
+    [activeRange.endDate, activeRange.startDate, getPeriodReport]
+  );
 
   const bumpAmount = (delta: number) => {
     const cur = parseFloat(amountInput) || 0;
@@ -172,24 +221,26 @@ export default function FinanceScreen() {
 
   const handleSettlePerson = async (person: string, net: number) => {
     await addTransaction({
+      accountId: activeAccountId,
       type: net > 0 ? 'received' : 'lent',
       amount: Math.abs(net),
       category: 'Settlement',
       note: 'Settled',
       person,
       paymentMode: 'UPI',
+      date: selectedDate,
     });
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
-  // Pie Chart data
+  // Pie Chart for active period
   const totalCatSpend = Math.max(
     1,
-    monthStats.categoryBreakdown.reduce((s, c) => s + c.amount, 0)
+    periodReport.categoryBreakdown.reduce((s, c) => s + c.amount, 0)
   );
   const pieRadius = 36;
   const pieCirc = 2 * Math.PI * pieRadius;
-  const pieSegments = monthStats.categoryBreakdown.reduce<
+  const pieSegments = periodReport.categoryBreakdown.reduce<
     { category: string; amount: number; pct: number; dash: number; offset: number; color: string }[]
   >((acc, item, idx) => {
     const prevSum = acc.reduce((s, x) => s + x.dash, 0);
@@ -206,40 +257,118 @@ export default function FinanceScreen() {
     return acc;
   }, []);
 
+  const periodTitle =
+    reportPeriod === 'daily'
+      ? `${formatReadableDate(selectedDate)} (${selectedDate})`
+      : reportPeriod === 'weekly'
+        ? `${formatShortDate(weekRange.startDate)} – ${formatShortDate(weekRange.endDate)}`
+        : monthRange.label;
+
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <DateStrip />
-
-      {/* Hero Balance Card */}
-      <View style={styles.heroCard}>
-        <View style={styles.rowBetween}>
-          <View>
-            <Text style={styles.kicker}>
-              AS OF {formatReadableDate(selectedDate).toUpperCase()} • TOTAL LEFT
-            </Text>
-            <Text
-              style={[
-                styles.heroAmount,
-                totalLeftAsOfDate !== null && totalLeftAsOfDate < 0 && { color: Colors.danger },
-              ]}
+      {/* Top Period Switcher: Daily | Weekly | Monthly */}
+      <View style={styles.periodBar}>
+        {(['daily', 'weekly', 'monthly'] as ReportPeriod[]).map((p) => {
+          const active = reportPeriod === p;
+          return (
+            <Pressable
+              key={p}
+              style={[styles.periodPill, active && styles.periodPillActive]}
+              onPress={() => setReportPeriod(p)}
             >
-              {totalLeftAsOfDate !== null
-                ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-                : 'No data'}
+              <Text style={[styles.periodText, active && styles.periodTextActive]}>
+                {p.charAt(0).toUpperCase() + p.slice(1)}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+
+      {reportPeriod === 'daily' && <DateStrip />}
+
+      {reportPeriod === 'weekly' && (
+        <View style={styles.navBar}>
+          <Pressable style={styles.navArrow} onPress={() => setWeekOffset((w) => w - 1)}>
+            <ChevronLeft size={18} color={Colors.text} />
+          </Pressable>
+          <View style={{ alignItems: 'center' }}>
+            <View style={styles.rowGapSmall}>
+              <Calendar size={14} color={Colors.primary} />
+              <Text style={styles.navTitle}>
+                {formatShortDate(weekRange.startDate)} – {formatShortDate(weekRange.endDate)}
+              </Text>
+            </View>
+            <Text style={styles.navSub}>
+              {weekOffset === 0 ? 'This Week' : `${Math.abs(weekOffset)} wk ago`}
             </Text>
           </View>
-          <Pressable
-            style={styles.iconBtn}
-            onPress={() => {
-              setBudgetDraft(String(monthlyBudget));
-              setBudgetModalOpen(true);
-            }}
-          >
-            <Settings size={18} color={Colors.textSecondary} />
+          <View style={styles.rowGapSmall}>
+            {weekOffset !== 0 && (
+              <Pressable style={styles.nowChip} onPress={() => setWeekOffset(0)}>
+                <Text style={styles.nowChipText}>Now</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={[styles.navArrow, weekOffset >= 0 && { opacity: 0.35 }]}
+              disabled={weekOffset >= 0}
+              onPress={() => setWeekOffset((w) => Math.min(0, w + 1))}
+            >
+              <ChevronRight size={18} color={Colors.text} />
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {reportPeriod === 'monthly' && (
+        <View style={styles.navBar}>
+          <Pressable style={styles.navArrow} onPress={() => setMonthOffset((m) => m - 1)}>
+            <ChevronLeft size={18} color={Colors.text} />
           </Pressable>
+          <View style={{ alignItems: 'center' }}>
+            <View style={styles.rowGapSmall}>
+              <Calendar size={14} color={Colors.primary} />
+              <Text style={styles.navTitle}>{monthRange.label}</Text>
+            </View>
+            <Text style={styles.navSub}>
+              {monthOffset === 0 ? 'Current Month' : `${Math.abs(monthOffset)} mo ago`}
+            </Text>
+          </View>
+          <View style={styles.rowGapSmall}>
+            {monthOffset !== 0 && (
+              <Pressable style={styles.nowChip} onPress={() => setMonthOffset(0)}>
+                <Text style={styles.nowChipText}>Now</Text>
+              </Pressable>
+            )}
+            <Pressable
+              style={[styles.navArrow, monthOffset >= 0 && { opacity: 0.35 }]}
+              disabled={monthOffset >= 0}
+              onPress={() => setMonthOffset((m) => Math.min(0, m + 1))}
+            >
+              <ChevronRight size={18} color={Colors.text} />
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* Hero Balance & Period Report Card */}
+      <View style={styles.heroCard}>
+        <View>
+          <Text style={styles.kicker}>
+            AS OF {formatReadableDate(selectedDate).toUpperCase()} • TOTAL LEFT
+          </Text>
+          <Text
+            style={[
+              styles.heroAmount,
+              totalLeftAsOfDate !== null && totalLeftAsOfDate < 0 && { color: Colors.danger },
+            ]}
+          >
+            {totalLeftAsOfDate !== null
+              ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+              : 'No data'}
+          </Text>
         </View>
 
-        {/* Accounts Strip (Auto-calculated carry-forward balances) */}
+        {/* Accounts Strip */}
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
           {accounts.map((acc) => {
             const bal = getAccountBalanceAsOf(acc, selectedDate);
@@ -277,40 +406,24 @@ export default function FinanceScreen() {
           </Pressable>
         </ScrollView>
 
-        <View style={styles.barBg}>
-          <View
-            style={[
-              styles.barFill,
-              {
-                width: `${monthStats.budgetUsedPct}%`,
-                backgroundColor:
-                  monthStats.budgetUsedPct > 90 ? Colors.danger : Colors.primary,
-              },
-            ]}
-          />
-        </View>
-
+        {/* Period Totals (Daily / Weekly / Monthly) */}
         <View style={styles.heroStatsRow}>
           <View style={styles.heroStat}>
-            <Text style={styles.heroStatLbl}>Spent</Text>
+            <Text style={styles.heroStatLbl}>Spent ({reportPeriod})</Text>
             <Text style={[styles.heroStatVal, { color: Colors.danger }]}>
-              ₹{monthStats.totalSpent.toLocaleString('en-IN')}
+              ₹{periodReport.totalSpent.toLocaleString('en-IN')}
             </Text>
           </View>
           <View style={styles.heroStat}>
-            <Text style={styles.heroStatLbl}>Budget</Text>
-            <Text style={styles.heroStatVal}>₹{monthlyBudget.toLocaleString('en-IN')}</Text>
-          </View>
-          <View style={styles.heroStat}>
-            <Text style={styles.heroStatLbl}>Gave / Lent</Text>
+            <Text style={styles.heroStatLbl}>Gave / Dues</Text>
             <Text style={[styles.heroStatVal, { color: Colors.amber }]}>
-              ₹{monthStats.totalLent.toLocaleString('en-IN')}
+              ₹{periodReport.totalLent.toLocaleString('en-IN')}
             </Text>
           </View>
           <View style={styles.heroStat}>
-            <Text style={styles.heroStatLbl}>Got Back</Text>
+            <Text style={styles.heroStatLbl}>Got Back / In</Text>
             <Text style={[styles.heroStatVal, { color: Colors.success }]}>
-              ₹{(monthStats.totalIncome + monthStats.totalReceived).toLocaleString('en-IN')}
+              ₹{(periodReport.totalIncome + periodReport.totalReceived).toLocaleString('en-IN')}
             </Text>
           </View>
         </View>
@@ -324,7 +437,7 @@ export default function FinanceScreen() {
         >
           <Wallet size={14} color={subTab === 'ledger' ? Colors.primary : Colors.textSecondary} />
           <Text style={[styles.subTabText, subTab === 'ledger' && styles.subTabTextActive]}>
-            Quick Add
+            {reportPeriod === 'daily' ? 'Quick Add' : 'Report'}
           </Text>
         </Pressable>
         <Pressable
@@ -342,344 +455,322 @@ export default function FinanceScreen() {
         >
           <PieChart size={14} color={subTab === 'stats' ? Colors.primary : Colors.textSecondary} />
           <Text style={[styles.subTabText, subTab === 'stats' && styles.subTabTextActive]}>
-            Stats
+            Breakdown
           </Text>
         </Pressable>
       </View>
 
-      {/* TAB 1: QUICK ADD + RECENT LEDGER */}
+      {/* TAB 1: QUICK ADD (in Daily) + PERIOD TRANSACTIONS REPORT */}
       {subTab === 'ledger' && (
         <>
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>3-Second Entry</Text>
+          {reportPeriod === 'daily' && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>3-Second Entry</Text>
 
-            {/* Transaction Type */}
-            <View style={styles.rowGapSmall}>
-              {TX_TYPES.map((t) => {
-                const active = txType === t.key;
-                return (
-                  <Pressable
-                    key={t.key}
-                    style={[styles.typePill, active && styles.typePillActive]}
-                    onPress={() => setTxType(t.key)}
-                  >
-                    <Text style={[styles.typeText, active && styles.typeTextActive]}>
-                      {t.label}
-                    </Text>
-                  </Pressable>
-                );
-              })}
-            </View>
-
-            {/* Amount + 1-Tap Chips */}
-            <View style={styles.amountRow}>
-              <Text style={styles.rupeePrefix}>₹</Text>
-              <TextInput
-                style={styles.amountInput}
-                keyboardType="decimal-pad"
-                placeholder="0"
-                placeholderTextColor={Colors.textMuted}
-                value={amountInput}
-                onChangeText={setAmountInput}
-              />
-              {Boolean(amountInput) && (
-                <Pressable onPress={() => setAmountInput('')}>
-                  <X size={18} color={Colors.textMuted} />
-                </Pressable>
-              )}
-            </View>
-
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {QUICK_AMOUNTS.map((amt) => (
-                <Pressable key={amt} style={styles.quickChip} onPress={() => bumpAmount(amt)}>
-                  <Text style={styles.quickChipText}>+₹{amt}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-
-            {/* Category (for Expense or Split) */}
-            {(txType === 'expense' || txType === 'split') && (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={{ gap: 8 }}
-              >
-                {EXPENSE_CATEGORIES.map((cat) => {
-                  const active = category === cat;
+              <View style={styles.rowGapSmall}>
+                {TX_TYPES.map((t) => {
+                  const active = txType === t.key;
                   return (
                     <Pressable
-                      key={cat}
-                      style={[styles.catChip, active && styles.catChipActive]}
-                      onPress={() => setCategory(cat)}
+                      key={t.key}
+                      style={[styles.typePill, active && styles.typePillActive]}
+                      onPress={() => setTxType(t.key)}
                     >
-                      <Text style={[styles.catText, active && styles.catTextActive]}>{cat}</Text>
+                      <Text style={[styles.typeText, active && styles.typeTextActive]}>
+                        {t.label}
+                      </Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              <View style={styles.amountRow}>
+                <Text style={styles.rupeePrefix}>₹</Text>
+                <TextInput
+                  style={styles.amountInput}
+                  keyboardType="decimal-pad"
+                  placeholder="0"
+                  placeholderTextColor={Colors.textMuted}
+                  value={amountInput}
+                  onChangeText={setAmountInput}
+                />
+                {Boolean(amountInput) && (
+                  <Pressable onPress={() => setAmountInput('')}>
+                    <X size={18} color={Colors.textMuted} />
+                  </Pressable>
+                )}
+              </View>
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {QUICK_AMOUNTS.map((amt) => (
+                  <Pressable key={amt} style={styles.quickChip} onPress={() => bumpAmount(amt)}>
+                    <Text style={styles.quickChipText}>+₹{amt}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+
+              {(txType === 'expense' || txType === 'split') && (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  contentContainerStyle={{ gap: 8 }}
+                >
+                  {EXPENSE_CATEGORIES.map((cat) => {
+                    const active = category === cat;
+                    return (
+                      <Pressable
+                        key={cat}
+                        style={[styles.catChip, active && styles.catChipActive]}
+                        onPress={() => setCategory(cat)}
+                      >
+                        <Text style={[styles.catText, active && styles.catTextActive]}>{cat}</Text>
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
+
+              {txType === 'split' && (
+                <View style={styles.splitBox}>
+                  <View style={styles.rowBetween}>
+                    <Text style={styles.splitLabel}>Split with people:</Text>
+                    <Pressable
+                      style={[styles.includeMeChip, splitIncludeSelf && styles.includeMeActive]}
+                      onPress={() => setSplitIncludeSelf((v) => !v)}
+                    >
+                      <Text
+                        style={[
+                          styles.includeMeText,
+                          splitIncludeSelf && { color: Colors.primary },
+                        ]}
+                      >
+                        {splitIncludeSelf ? '✓ Include me' : 'Exclude me'}
+                      </Text>
+                    </Pressable>
+                  </View>
+
+                  {knownPeople.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: 8 }}
+                    >
+                      {knownPeople.map((person) => {
+                        const active = splitPeople.some(
+                          (p) => p.toLowerCase() === person.toLowerCase()
+                        );
+                        return (
+                          <Pressable
+                            key={person}
+                            style={[styles.catChip, active && styles.catChipActive]}
+                            onPress={() => toggleSplitPerson(person)}
+                          >
+                            <Text style={[styles.catText, active && styles.catTextActive]}>
+                              {active ? `✓ ${person}` : person}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+
+                  <View style={styles.rowGap}>
+                    <TextInput
+                      style={[styles.input, { flex: 1 }]}
+                      placeholder="Add person (e.g. Aman)"
+                      placeholderTextColor={Colors.textMuted}
+                      value={splitNewPerson}
+                      onChangeText={setSplitNewPerson}
+                    />
+                    <Pressable
+                      style={styles.addPersonBtn}
+                      onPress={() => {
+                        if (!splitNewPerson.trim()) return;
+                        toggleSplitPerson(splitNewPerson.trim());
+                        setSplitNewPerson('');
+                      }}
+                    >
+                      <Plus size={16} color={Colors.primaryText} />
+                    </Pressable>
+                  </View>
+
+                  {splitPeople.length > 0 && (parseFloat(amountInput) || 0) > 0 && (
+                    <Text style={styles.splitPreview}>
+                      Split {splitPeople.length + (splitIncludeSelf ? 1 : 0)} ways → ₹
+                      {(
+                        (parseFloat(amountInput) || 0) /
+                        (splitPeople.length + (splitIncludeSelf ? 1 : 0))
+                      ).toFixed(0)}{' '}
+                      each
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {(txType === 'lent' || txType === 'received') && (
+                <View style={{ gap: 8 }}>
+                  {knownPeople.length > 0 && (
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: 8 }}
+                    >
+                      {knownPeople.map((person) => {
+                        const active = personInput.toLowerCase() === person.toLowerCase();
+                        return (
+                          <Pressable
+                            key={person}
+                            style={[styles.catChip, active && styles.catChipActive]}
+                            onPress={() => setPersonInput(person)}
+                          >
+                            <Text style={[styles.catText, active && styles.catTextActive]}>
+                              {person}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  )}
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Person name (e.g. Rahul)"
+                    placeholderTextColor={Colors.textMuted}
+                    value={personInput}
+                    onChangeText={setPersonInput}
+                  />
+                </View>
+              )}
+
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                {accounts.map((acc) => {
+                  const active = acc.id === activeAccountId;
+                  return (
+                    <Pressable
+                      key={acc.id}
+                      style={[styles.catChip, active && styles.catChipActive]}
+                      onPress={() => setSelectedAccountId(acc.id)}
+                    >
+                      <Text style={[styles.catText, active && styles.catTextActive]}>{acc.name}</Text>
                     </Pressable>
                   );
                 })}
               </ScrollView>
-            )}
 
-            {/* Split Between People */}
-            {txType === 'split' && (
-              <View style={styles.splitBox}>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.splitLabel}>Split with people:</Text>
-                  <Pressable
-                    style={[styles.includeMeChip, splitIncludeSelf && styles.includeMeActive]}
-                    onPress={() => setSplitIncludeSelf((v) => !v)}
-                  >
-                    <Text
-                      style={[
-                        styles.includeMeText,
-                        splitIncludeSelf && { color: Colors.primary },
-                      ]}
+              <View style={styles.rowGap}>
+                <View style={styles.modeGroup}>
+                  {PAYMENT_MODES.map((m) => (
+                    <Pressable
+                      key={m}
+                      style={[styles.modePill, paymentMode === m && styles.modePillActive]}
+                      onPress={() => setPaymentMode(m)}
                     >
-                      {splitIncludeSelf ? '✓ Include me' : 'Exclude me'}
-                    </Text>
-                  </Pressable>
+                      <Text style={[styles.modeText, paymentMode === m && styles.modeTextActive]}>
+                        {m}
+                      </Text>
+                    </Pressable>
+                  ))}
                 </View>
-
-                {knownPeople.length > 0 && (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 8 }}
-                  >
-                    {knownPeople.map((person) => {
-                      const active = splitPeople.some(
-                        (p) => p.toLowerCase() === person.toLowerCase()
-                      );
-                      return (
-                        <Pressable
-                          key={person}
-                          style={[styles.catChip, active && styles.catChipActive]}
-                          onPress={() => toggleSplitPerson(person)}
-                        >
-                          <Text style={[styles.catText, active && styles.catTextActive]}>
-                            {active ? `✓ ${person}` : person}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                )}
-
-                <View style={styles.rowGap}>
-                  <TextInput
-                    style={[styles.input, { flex: 1 }]}
-                    placeholder="Add person (e.g. Aman)"
-                    placeholderTextColor={Colors.textMuted}
-                    value={splitNewPerson}
-                    onChangeText={setSplitNewPerson}
-                  />
-                  <Pressable
-                    style={styles.addPersonBtn}
-                    onPress={() => {
-                      if (!splitNewPerson.trim()) return;
-                      toggleSplitPerson(splitNewPerson.trim());
-                      setSplitNewPerson('');
-                    }}
-                  >
-                    <Plus size={16} color={Colors.primaryText} />
-                  </Pressable>
-                </View>
-
-                {splitPeople.length > 0 && (parseFloat(amountInput) || 0) > 0 && (
-                  <Text style={styles.splitPreview}>
-                    Split {splitPeople.length + (splitIncludeSelf ? 1 : 0)} ways → ₹
-                    {(
-                      (parseFloat(amountInput) || 0) /
-                      (splitPeople.length + (splitIncludeSelf ? 1 : 0))
-                    ).toFixed(0)}{' '}
-                    each
-                  </Text>
-                )}
-              </View>
-            )}
-
-            {(txType === 'lent' || txType === 'received') && (
-              <View style={{ gap: 8 }}>
-                {knownPeople.length > 0 && (
-                  <ScrollView
-                    horizontal
-                    showsHorizontalScrollIndicator={false}
-                    contentContainerStyle={{ gap: 8 }}
-                  >
-                    {knownPeople.map((person) => {
-                      const active = personInput.toLowerCase() === person.toLowerCase();
-                      return (
-                        <Pressable
-                          key={person}
-                          style={[styles.catChip, active && styles.catChipActive]}
-                          onPress={() => setPersonInput(person)}
-                        >
-                          <Text style={[styles.catText, active && styles.catTextActive]}>
-                            {person}
-                          </Text>
-                        </Pressable>
-                      );
-                    })}
-                  </ScrollView>
-                )}
                 <TextInput
-                  style={styles.input}
-                  placeholder="Person name (e.g. Rahul)"
+                  style={[styles.input, { flex: 1 }]}
+                  placeholder="Where / note (optional)"
                   placeholderTextColor={Colors.textMuted}
-                  value={personInput}
-                  onChangeText={setPersonInput}
+                  value={noteInput}
+                  onChangeText={setNoteInput}
                 />
               </View>
-            )}
 
-            {/* Account Selector */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-              {accounts.map((acc) => {
-                const active = acc.id === activeAccountId;
-                return (
-                  <Pressable
-                    key={acc.id}
-                    style={[styles.catChip, active && styles.catChipActive]}
-                    onPress={() => setSelectedAccountId(acc.id)}
-                  >
-                    <Text style={[styles.catText, active && styles.catTextActive]}>{acc.name}</Text>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
+              <Pressable style={styles.addBtn} onPress={() => void handleQuickAdd()}>
+                <Plus size={18} color={Colors.primaryText} />
+                <Text style={styles.addBtnText}>
+                  Add {amountInput ? `₹${amountInput}` : 'Entry'}
+                </Text>
+              </Pressable>
+            </View>
+          )}
 
-            {/* Payment Mode + Optional Where/Note */}
-            <View style={styles.rowGap}>
-              <View style={styles.modeGroup}>
-                {PAYMENT_MODES.map((m) => (
-                  <Pressable
-                    key={m}
-                    style={[styles.modePill, paymentMode === m && styles.modePillActive]}
-                    onPress={() => setPaymentMode(m)}
-                  >
-                    <Text style={[styles.modeText, paymentMode === m && styles.modeTextActive]}>
-                      {m}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="Where / note (optional)"
-                placeholderTextColor={Colors.textMuted}
-                value={noteInput}
-                onChangeText={setNoteInput}
-              />
+          {/* Category Summary for Weekly & Monthly Reports */}
+          {reportPeriod !== 'daily' && periodReport.categoryBreakdown.length > 0 && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>
+                Expenses by Category ({periodTitle})
+              </Text>
+              {periodReport.categoryBreakdown.map((item) => (
+                <View key={item.category} style={styles.catReportRow}>
+                  <Text style={styles.catReportName}>{item.category}</Text>
+                  <Text style={styles.catReportAmt}>
+                    ₹{item.amount.toLocaleString('en-IN')}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          )}
+
+          {/* Transactions List for Selected Period (Daily / Weekly / Monthly) */}
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>{periodTitle}</Text>
+              <Text style={styles.txMeta}>{periodReport.transactions.length} entries</Text>
             </View>
 
-            <Pressable style={styles.addBtn} onPress={() => void handleQuickAdd()}>
-              <Plus size={18} color={Colors.primaryText} />
-              <Text style={styles.addBtnText}>
-                Add {amountInput ? `₹${amountInput}` : 'Entry'}
-              </Text>
-            </Pressable>
-          </View>
-
-          {/* Selected Date Transactions */}
-          {(() => {
-            const dayTxs = transactions.filter((t) => t.date === selectedDate);
-            const dayOut = dayTxs
-              .filter((t) => t.type === 'expense' || t.type === 'lent')
-              .reduce((s, t) => s + t.amount, 0);
-            const dayIn = dayTxs
-              .filter((t) => t.type === 'income' || t.type === 'received')
-              .reduce((s, t) => s + t.amount, 0);
-
-            return (
-              <View style={styles.card}>
-                <View style={styles.rowBetween}>
-                  <Text style={styles.cardTitle}>
-                    {formatReadableDate(selectedDate)} ({selectedDate})
-                  </Text>
-                  <View style={styles.rowGapSmall}>
-                    {dayOut > 0 && (
-                      <Text style={[styles.dayGroupTotal, { color: Colors.danger }]}>
-                        -₹{dayOut.toLocaleString('en-IN')}
+            {periodReport.transactions.length === 0 ? (
+              <Text style={styles.emptyText}>No transactions recorded for {periodTitle}.</Text>
+            ) : (
+              periodReport.transactions.map((tx) => {
+                const isOut = tx.type === 'expense' || tx.type === 'lent';
+                return (
+                  <View key={tx.id} style={styles.txRow}>
+                    <View
+                      style={[
+                        styles.txIcon,
+                        {
+                          backgroundColor: isOut ? Colors.dangerSoft : Colors.successSoft,
+                        },
+                      ]}
+                    >
+                      {isOut ? (
+                        <ArrowUpRight size={15} color={Colors.danger} />
+                      ) : (
+                        <ArrowDownLeft size={15} color={Colors.success} />
+                      )}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.txTitle}>
+                        {tx.person
+                          ? `${tx.person} (${tx.type === 'lent' ? 'Gave' : 'Got'})`
+                          : tx.category}
+                        {tx.note ? ` • ${tx.note}` : ''}
                       </Text>
-                    )}
-                    {dayIn > 0 && (
-                      <Text style={[styles.dayGroupTotal, { color: Colors.success }]}>
-                        +₹{dayIn.toLocaleString('en-IN')}
+                      <Text style={styles.txMeta}>
+                        {tx.date} • {accounts.find((a) => a.id === tx.accountId)?.name ?? 'SBI'} •{' '}
+                        {tx.paymentMode}
                       </Text>
-                    )}
+                    </View>
+                    <Text
+                      style={[
+                        styles.txAmt,
+                        { color: isOut ? Colors.danger : Colors.success },
+                      ]}
+                    >
+                      {isOut ? '-' : '+'}₹{tx.amount.toLocaleString('en-IN')}
+                    </Text>
+                    <Pressable onPress={() => void deleteTransaction(tx.id)}>
+                      <Trash2 size={15} color={Colors.textMuted} />
+                    </Pressable>
                   </View>
-                </View>
-
-                {dayTxs.length === 0 ? (
-                  <Text style={styles.emptyText}>
-                    No transactions on {formatReadableDate(selectedDate)}. Use Quick Add above to
-                    log for this date.
-                  </Text>
-                ) : (
-                  dayTxs.map((tx) => {
-                    const isOut = tx.type === 'expense' || tx.type === 'lent';
-                    const timeLabel = new Date(tx.createdAt).toLocaleTimeString('en-US', {
-                      hour: 'numeric',
-                      minute: '2-digit',
-                    });
-                    return (
-                      <View key={tx.id} style={styles.txRow}>
-                        <View
-                          style={[
-                            styles.txIcon,
-                            {
-                              backgroundColor: isOut
-                                ? Colors.dangerSoft
-                                : Colors.successSoft,
-                            },
-                          ]}
-                        >
-                          {isOut ? (
-                            <ArrowUpRight size={15} color={Colors.danger} />
-                          ) : (
-                            <ArrowDownLeft size={15} color={Colors.success} />
-                          )}
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.txTitle}>
-                            {tx.person
-                              ? `${tx.person} (${tx.type === 'lent' ? 'Gave' : 'Got'})`
-                              : tx.category}
-                            {tx.note ? ` • ${tx.note}` : ''}
-                          </Text>
-                          <Text style={styles.txMeta}>
-                            {timeLabel} •{' '}
-                            {accounts.find((a) => a.id === tx.accountId)?.name ?? 'SBI'} •{' '}
-                            {tx.paymentMode}
-                          </Text>
-                        </View>
-                        <Text
-                          style={[
-                            styles.txAmt,
-                            { color: isOut ? Colors.danger : Colors.success },
-                          ]}
-                        >
-                          {isOut ? '-' : '+'}₹{tx.amount.toLocaleString('en-IN')}
-                        </Text>
-                        <Pressable onPress={() => void deleteTransaction(tx.id)}>
-                          <Trash2 size={15} color={Colors.textMuted} />
-                        </Pressable>
-                      </View>
-                    );
-                  })
-                )}
-              </View>
-            );
-          })()}
+                );
+              })
+            )}
+          </View>
         </>
       )}
 
       {/* TAB 2: PEOPLE / UDHAR */}
       {subTab === 'people' && (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Money Given &amp; Received (People)</Text>
+          <Text style={styles.cardTitle}>Money Given &amp; Received (Dues)</Text>
           {peopleBalances.length === 0 ? (
             <Text style={styles.emptyText}>
-              Use &quot;Gave&quot; or &quot;Got Back&quot; in Quick Add to track money with friends.
+              Use &quot;Gave&quot;, &quot;Got Back&quot;, or &quot;Split&quot; to track dues with friends.
             </Text>
           ) : (
             peopleBalances.map((p) => (
@@ -717,12 +808,12 @@ export default function FinanceScreen() {
         </View>
       )}
 
-      {/* TAB 3: STATS & CHARTS */}
+      {/* TAB 3: BREAKDOWN CHARTS */}
       {subTab === 'stats' && (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Spending Breakdown (This Month)</Text>
-          {monthStats.categoryBreakdown.length === 0 ? (
-            <Text style={styles.emptyText}>Log expenses this month to see category charts.</Text>
+          <Text style={styles.cardTitle}>Spending Breakdown ({periodTitle})</Text>
+          {periodReport.categoryBreakdown.length === 0 ? (
+            <Text style={styles.emptyText}>No expenses recorded in this period.</Text>
           ) : (
             <View style={styles.pieRow}>
               <Svg width={96} height={96}>
@@ -761,44 +852,13 @@ export default function FinanceScreen() {
               <View key={m} style={styles.modeStatBox}>
                 <Text style={styles.heroStatLbl}>{m}</Text>
                 <Text style={styles.heroStatVal}>
-                  ₹{monthStats.modeTotals[m].toLocaleString('en-IN')}
+                  ₹{periodReport.modeTotals[m].toLocaleString('en-IN')}
                 </Text>
               </View>
             ))}
           </View>
         </View>
       )}
-
-      {/* Budget Modal */}
-      <Modal visible={budgetModalOpen} animationType="fade" transparent>
-        <View style={styles.overlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>Monthly Starting Budget (₹)</Text>
-              <Pressable onPress={() => setBudgetModalOpen(false)}>
-                <X size={20} color={Colors.textSecondary} />
-              </Pressable>
-            </View>
-            <TextInput
-              style={styles.input}
-              keyboardType="number-pad"
-              value={budgetDraft}
-              onChangeText={setBudgetDraft}
-              placeholder="15000"
-              placeholderTextColor={Colors.textMuted}
-            />
-            <Pressable
-              style={styles.addBtn}
-              onPress={async () => {
-                await updateBudget(parseInt(budgetDraft, 10) || 0);
-                setBudgetModalOpen(false);
-              }}
-            >
-              <Text style={styles.addBtnText}>Save Budget</Text>
-            </Pressable>
-          </View>
-        </View>
-      </Modal>
 
       {/* Add / Edit Account Modal */}
       <Modal visible={accountModalOpen} animationType="fade" transparent>
@@ -857,6 +917,55 @@ export default function FinanceScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
+  periodBar: {
+    flexDirection: 'row',
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    padding: 4,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 4,
+  },
+  periodPill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    alignItems: 'center',
+  },
+  periodPillActive: { backgroundColor: Colors.primary },
+  periodText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  periodTextActive: { color: Colors.primaryText },
+  navBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: 16,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  navArrow: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  navTitle: { color: Colors.text, fontSize: 15, fontWeight: '800' },
+  navSub: { color: Colors.textMuted, fontSize: 11, fontWeight: '600', marginTop: 1 },
+  nowChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+  },
+  nowChipText: { color: Colors.gold, fontSize: 11, fontWeight: '700' },
   heroCard: {
     backgroundColor: Colors.surface,
     borderRadius: 20,
@@ -870,19 +979,38 @@ const styles = StyleSheet.create({
   rowGapSmall: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   kicker: { color: Colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
   heroAmount: { color: Colors.text, fontSize: 32, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  iconBtn: {
-    padding: 8,
-    borderRadius: 10,
-    backgroundColor: Colors.bg,
-    borderWidth: 1,
-    borderColor: Colors.border,
+  heroStatsRow: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+    paddingTop: 10,
   },
-  barBg: { height: 7, borderRadius: 4, backgroundColor: Colors.surfaceElevated, overflow: 'hidden' },
-  barFill: { height: '100%', borderRadius: 4 },
-  heroStatsRow: { flexDirection: 'row', paddingTop: 4 },
   heroStat: { flex: 1 },
   heroStatLbl: { color: Colors.textMuted, fontSize: 11 },
-  heroStatVal: { color: Colors.text, fontSize: 13, fontWeight: '800', marginTop: 2 },
+  heroStatVal: { color: Colors.text, fontSize: 14, fontWeight: '800', marginTop: 2 },
+  accountTile: {
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    minWidth: 100,
+  },
+  accountName: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
+  accountBal: { color: Colors.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
+  addAccountTile: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.primarySoft,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  addAccountText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
   subTabBar: { flexDirection: 'row', gap: 8 },
   subTab: {
     flex: 1,
@@ -959,6 +1087,37 @@ const styles = StyleSheet.create({
   catChipActive: { backgroundColor: Colors.primarySoft, borderColor: Colors.primary },
   catText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600' },
   catTextActive: { color: Colors.primary, fontWeight: '700' },
+  splitBox: {
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
+  splitLabel: { color: Colors.text, fontSize: 12, fontWeight: '700' },
+  includeMeChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    backgroundColor: Colors.surface,
+  },
+  includeMeActive: {
+    borderColor: Colors.primary,
+    backgroundColor: Colors.primarySoft,
+  },
+  includeMeText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
+  addPersonBtn: {
+    backgroundColor: Colors.primary,
+    borderRadius: 10,
+    width: 38,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splitPreview: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
   modeGroup: { flexDirection: 'row', gap: 4 },
   modePill: {
     paddingHorizontal: 10,
@@ -991,52 +1150,16 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   addBtnText: { color: Colors.primaryText, fontSize: 14, fontWeight: '800' },
-  emptyText: { color: Colors.textMuted, fontSize: 13, lineHeight: 19 },
-  dayGroup: {
-    borderTopWidth: 1,
-    borderTopColor: Colors.border,
-    paddingTop: 10,
-    gap: 2,
-  },
-  dayGroupHeader: {
+  catReportRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingBottom: 4,
+    paddingVertical: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
   },
-  dayGroupTitle: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
-  dayGroupTotal: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
-  splitBox: {
-    backgroundColor: Colors.bg,
-    borderRadius: 12,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    gap: 8,
-  },
-  splitLabel: { color: Colors.text, fontSize: 12, fontWeight: '700' },
-  includeMeChip: {
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    backgroundColor: Colors.surface,
-  },
-  includeMeActive: {
-    borderColor: Colors.primary,
-    backgroundColor: Colors.primarySoft,
-  },
-  includeMeText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
-  addPersonBtn: {
-    backgroundColor: Colors.primary,
-    borderRadius: 10,
-    width: 38,
-    height: 38,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  splitPreview: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  catReportName: { color: Colors.text, fontSize: 13, fontWeight: '600' },
+  catReportAmt: { color: Colors.text, fontSize: 13, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  emptyText: { color: Colors.textMuted, fontSize: 13, lineHeight: 19 },
   txRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1104,27 +1227,4 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  accountTile: {
-    backgroundColor: Colors.bg,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Colors.border,
-    minWidth: 100,
-  },
-  accountName: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
-  accountBal: { color: Colors.text, fontSize: 15, fontWeight: '800', marginTop: 2 },
-  addAccountTile: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    backgroundColor: Colors.primarySoft,
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderWidth: 1,
-    borderColor: Colors.primary,
-  },
-  addAccountText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
 });
