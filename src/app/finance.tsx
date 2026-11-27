@@ -89,6 +89,7 @@ export default function FinanceScreen() {
   const todayStr = getTodayDateString();
   const {
     accounts,
+    transactions,
     peopleBalances,
     knownPeople,
     addAccount,
@@ -139,6 +140,21 @@ export default function FinanceScreen() {
     () => Math.round(toPayPeople.reduce((sum, p) => sum + Math.abs(p.net), 0) * 100) / 100,
     [toPayPeople]
   );
+
+  const splitPayerOptions = useMemo(() => {
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const name of [...knownPeople, ...splitPeople, splitNewPerson.trim()]) {
+      const trimmed = name.trim();
+      if (!trimmed) continue;
+      const key = trimmed.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        list.push(trimmed);
+      }
+    }
+    return list;
+  }, [knownPeople, splitNewPerson, splitPeople]);
 
   const activeAccountId = accounts.some((a) => a.id === selectedAccountId)
     ? selectedAccountId
@@ -682,50 +698,54 @@ export default function FinanceScreen() {
                     </Pressable>
                   </View>
 
-                  {splitPeople.length > 0 && (parseFloat(amountInput) || 0) > 0 && (
-                    <Text style={styles.splitPreview}>
-                      Split {splitPeople.length + (splitIncludeSelf ? 1 : 0)} ways → ₹
-                      {(
-                        (parseFloat(amountInput) || 0) /
-                        (splitPeople.length + (splitIncludeSelf ? 1 : 0))
-                      ).toFixed(0)}{' '}
-                      each
-                    </Text>
-                  )}
+                  {(splitPeople.length > 0 || splitNewPerson.trim().length > 0) &&
+                    (parseFloat(amountInput) || 0) > 0 && (
+                      <Text style={styles.splitPreview}>
+                        {(() => {
+                          const allP = splitNewPerson.trim()
+                            ? [...splitPeople, splitNewPerson.trim()]
+                            : splitPeople;
+                          const ways = allP.length + (splitIncludeSelf ? 1 : 0);
+                          const share = ways > 0 ? (parseFloat(amountInput) || 0) / ways : 0;
+                          if (paidByPerson) {
+                            return `Split ${ways} ways → Your share ₹${share.toFixed(0)} added to To Pay (${paidByPerson})`;
+                          }
+                          return `Split ${ways} ways → ₹${share.toFixed(0)}/person added to Owed to You`;
+                        })()}
+                      </Text>
+                    )}
 
-                  {knownPeople.length > 0 && (
-                    <View style={{ gap: 4 }}>
-                      <Text style={styles.splitLabel}>Paid by:</Text>
-                      <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={{ gap: 8 }}
+                  <View style={{ gap: 4 }}>
+                    <Text style={styles.splitLabel}>Paid by:</Text>
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      contentContainerStyle={{ gap: 8 }}
+                    >
+                      <Pressable
+                        style={[styles.catChip, !paidByPerson && styles.catChipActive]}
+                        onPress={() => setPaidByPerson('')}
                       >
-                        <Pressable
-                          style={[styles.catChip, !paidByPerson && styles.catChipActive]}
-                          onPress={() => setPaidByPerson('')}
-                        >
-                          <Text style={[styles.catText, !paidByPerson && styles.catTextActive]}>
-                            Me (My Account)
-                          </Text>
-                        </Pressable>
-                        {knownPeople.map((person) => {
-                          const active = paidByPerson.toLowerCase() === person.toLowerCase();
-                          return (
-                            <Pressable
-                              key={`paid_${person}`}
-                              style={[styles.catChip, active && styles.catChipActive]}
-                              onPress={() => setPaidByPerson(person)}
-                            >
-                              <Text style={[styles.catText, active && styles.catTextActive]}>
-                                {person} (Advance)
-                              </Text>
-                            </Pressable>
-                          );
-                        })}
-                      </ScrollView>
-                    </View>
-                  )}
+                        <Text style={[styles.catText, !paidByPerson && styles.catTextActive]}>
+                          Me (My Account)
+                        </Text>
+                      </Pressable>
+                      {splitPayerOptions.map((person) => {
+                        const active = paidByPerson.toLowerCase() === person.toLowerCase();
+                        return (
+                          <Pressable
+                            key={`paid_${person}`}
+                            style={[styles.catChip, active && styles.catChipActive]}
+                            onPress={() => setPaidByPerson(person)}
+                          >
+                            <Text style={[styles.catText, active && styles.catTextActive]}>
+                              {person}
+                            </Text>
+                          </Pressable>
+                        );
+                      })}
+                    </ScrollView>
+                  </View>
                 </View>
               )}
 
@@ -995,7 +1015,7 @@ export default function FinanceScreen() {
                       onPress={() => void handleSettlePerson(p.person, p.net)}
                     >
                       <Check size={13} color={Colors.primaryText} />
-                      <Text style={styles.settleBtnText}>Pay &amp; Settle</Text>
+                      <Text style={styles.settleBtnText}>Mark Paid</Text>
                     </Pressable>
                   </View>
                 </View>
@@ -1038,17 +1058,34 @@ export default function FinanceScreen() {
           {settledPeople.length > 0 && (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Settled</Text>
-              {settledPeople.map((p) => (
-                <View key={p.person} style={styles.personRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.txTitle}>{p.person}</Text>
-                    <Text style={styles.txMeta}>
-                      Gave ₹{p.lent} • Got ₹{p.received}
-                    </Text>
+              {settledPeople.map((p) => {
+                const lastSettlement = transactions.find(
+                  (t) =>
+                    t.person?.toLowerCase() === p.person.toLowerCase() &&
+                    t.category === 'Settlement'
+                );
+                return (
+                  <View key={p.person} style={styles.personRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.txTitle}>{p.person}</Text>
+                      <Text style={styles.txMeta}>
+                        Gave ₹{p.lent} • Got ₹{p.received}
+                      </Text>
+                    </View>
+                    <View style={styles.rowGapSmall}>
+                      <Text style={[styles.settledText, { color: Colors.success }]}>Settled ✓</Text>
+                      {lastSettlement && (
+                        <Pressable
+                          style={styles.addToPayBtn}
+                          onPress={() => void deleteTransaction(lastSettlement.id)}
+                        >
+                          <Text style={styles.addToPayBtnText}>Mark Unpaid</Text>
+                        </Pressable>
+                      )}
+                    </View>
                   </View>
-                  <Text style={[styles.settledText, { color: Colors.success }]}>Settled ✓</Text>
-                </View>
-              ))}
+                );
+              })}
             </View>
           )}
         </>
