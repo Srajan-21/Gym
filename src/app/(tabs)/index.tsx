@@ -6,6 +6,7 @@ import {
   Image,
   Modal,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   Text,
@@ -50,6 +51,7 @@ import { getOptimizedPhotoUrl } from '../../lib/cloudinary';
 import { formatSetDisplay } from '../../lib/workoutFormat';
 import { GymAndroidNative } from '../../native/GymAndroidNative';
 import { getCachedJson, getTodayDateString, setCachedJson } from '../../lib/storage';
+import { supabase } from '../../lib/supabase';
 import { Colors } from '../../theme/colors';
 import { PoseTag, ProgressPhoto } from '../../types/database';
 
@@ -106,6 +108,28 @@ export default function TodayScreen() {
 
   const [backfillOpen, setBackfillOpen] = useState(false);
   const [enlargedPhoto, setEnlargedPhoto] = useState<ProgressPhoto | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
+
+  const handleManualRefresh = useCallback(async () => {
+    setRefreshing(true);
+    setSyncError(null);
+    try {
+      const { error } = await supabase
+        .from('workout_sessions')
+        .select('id')
+        .eq('user_id', user.id)
+        .limit(1);
+      if (error) {
+        setSyncError(`Supabase error: ${error.message}`);
+      }
+      await Promise.all([refreshDiet(), refreshWorkout(), refreshHabits()]);
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : 'Network error connecting to Supabase');
+    } finally {
+      setRefreshing(false);
+    }
+  }, [refreshDiet, refreshHabits, refreshWorkout, user.id]);
   const [savedDays, setSavedDays] = useState<Record<string, boolean>>({});
   const savedDaysCacheKey = `gym_saved_days_${user.id}_v1`;
 
@@ -336,7 +360,17 @@ export default function TodayScreen() {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView
+      style={styles.container}
+      contentContainerStyle={styles.content}
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => void handleManualRefresh()}
+          tintColor={Colors.primary}
+        />
+      }
+    >
       {/* Header */}
       <View style={styles.header}>
         <View>
@@ -345,7 +379,9 @@ export default function TodayScreen() {
             <Text style={styles.title}>{formatReadableDate(selectedDate)}</Text>
             {isDaySaved && <CheckCircle2 size={20} color={Colors.success} />}
           </View>
-          <Text style={styles.sub}>{user.phone_number}</Text>
+          <Text style={styles.sub}>
+            {user.phone_number} • {selectedDate}
+          </Text>
         </View>
         {!isLockedFuture &&
           (isDaySaved ? (
@@ -362,6 +398,12 @@ export default function TodayScreen() {
       </View>
 
       <DateStrip />
+
+      {Boolean(syncError) && (
+        <View style={styles.syncErrorCard}>
+          <Text style={styles.syncErrorText}>{syncError}</Text>
+        </View>
+      )}
 
       {isLockedFuture ? (
         <View style={styles.futureCard}>
@@ -1573,6 +1615,14 @@ const styles = StyleSheet.create({
   futureEmoji: { fontSize: 36 },
   futureTitle: { color: Colors.text, fontSize: 20, fontWeight: '800', textAlign: 'center' },
   futureSub: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  syncErrorCard: {
+    backgroundColor: Colors.dangerSoft,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+  },
+  syncErrorText: { color: Colors.danger, fontSize: 12, fontWeight: '700' },
   disciplineGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
