@@ -126,6 +126,20 @@ export default function FinanceScreen() {
   const [newAccBalance, setNewAccBalance] = useState('');
   const [editingAccId, setEditingAccId] = useState<string | null>(null);
 
+  // To Pay quick-add state
+  const [showAddToPay, setShowAddToPay] = useState(false);
+  const [toPayPerson, setToPayPerson] = useState('');
+  const [toPayAmount, setToPayAmount] = useState('');
+  const [toPayNote, setToPayNote] = useState('');
+
+  const toPayPeople = useMemo(() => peopleBalances.filter((p) => p.net < 0), [peopleBalances]);
+  const toReceivePeople = useMemo(() => peopleBalances.filter((p) => p.net > 0), [peopleBalances]);
+  const settledPeople = useMemo(() => peopleBalances.filter((p) => p.net === 0), [peopleBalances]);
+  const totalToPay = useMemo(
+    () => Math.round(toPayPeople.reduce((sum, p) => sum + Math.abs(p.net), 0) * 100) / 100,
+    [toPayPeople]
+  );
+
   const activeAccountId = accounts.some((a) => a.id === selectedAccountId)
     ? selectedAccountId
     : (accounts[0]?.id ?? 'acc_sbi');
@@ -244,6 +258,33 @@ export default function FinanceScreen() {
       date: selectedDate,
     });
     await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+  };
+
+  const handleAddToPay = async () => {
+    const amt = parseFloat(toPayAmount);
+    if (!toPayPerson.trim()) {
+      Alert.alert('Person Required', 'Enter who you have to pay.');
+      return;
+    }
+    if (!amt || amt <= 0) {
+      Alert.alert('Invalid Amount', 'Enter an amount greater than 0.');
+      return;
+    }
+    await addTransaction({
+      accountId: 'external',
+      type: 'received',
+      amount: amt,
+      category: 'To Pay',
+      note: toPayNote.trim() || 'To pay',
+      person: toPayPerson.trim(),
+      paymentMode: 'UPI',
+      date: selectedDate,
+    });
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setToPayPerson('');
+    setToPayAmount('');
+    setToPayNote('');
+    setShowAddToPay(false);
   };
 
   // Pie Chart for active period
@@ -464,6 +505,16 @@ export default function FinanceScreen() {
             </Text>
           </View>
         </View>
+
+        {totalToPay > 0 && (
+          <Pressable style={styles.toPayBanner} onPress={() => setSubTab('people')}>
+            <Text style={styles.toPayBannerText}>
+              To Pay: ₹{totalToPay.toLocaleString('en-IN')} ({toPayPeople.length}{' '}
+              {toPayPeople.length === 1 ? 'person' : 'people'})
+            </Text>
+            <Text style={styles.toPayBannerLink}>View →</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Sub-Tabs */}
@@ -483,7 +534,7 @@ export default function FinanceScreen() {
         >
           <Users size={14} color={subTab === 'people' ? Colors.primary : Colors.textSecondary} />
           <Text style={[styles.subTabText, subTab === 'people' && styles.subTabTextActive]}>
-            People ({peopleBalances.filter((p) => p.net !== 0).length})
+            To Pay ({toPayPeople.length})
           </Text>
         </Pressable>
         <Pressable
@@ -837,34 +888,139 @@ export default function FinanceScreen() {
         </>
       )}
 
-      {/* TAB 2: PEOPLE / UDHAR */}
+      {/* TAB 2: TO PAY & DUES */}
       {subTab === 'people' && (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Money Given &amp; Received (Dues)</Text>
-          {peopleBalances.length === 0 ? (
-            <Text style={styles.emptyText}>
-              Use &quot;Gave&quot;, &quot;Got Back&quot;, or &quot;Split&quot; to track dues with friends.
-            </Text>
-          ) : (
-            peopleBalances.map((p) => (
-              <View key={p.person} style={styles.personRow}>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.txTitle}>{p.person}</Text>
-                  <Text style={styles.txMeta}>
-                    Gave ₹{p.lent} • Got ₹{p.received}
-                  </Text>
-                </View>
-                {p.net === 0 ? (
-                  <Text style={[styles.settledText, { color: Colors.success }]}>Settled ✓</Text>
-                ) : (
+        <>
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <View>
+                <Text style={styles.cardTitle}>To Pay (You Owe)</Text>
+                <Text style={styles.txMeta}>
+                  {toPayPeople.length === 0
+                    ? 'All clear'
+                    : `Total ₹${totalToPay.toLocaleString('en-IN')} to ${toPayPeople.length} ${
+                        toPayPeople.length === 1 ? 'person' : 'people'
+                      }`}
+                </Text>
+              </View>
+              <Pressable
+                style={styles.addToPayBtn}
+                onPress={() => setShowAddToPay((v) => !v)}
+              >
+                <Plus size={14} color={Colors.primary} />
+                <Text style={styles.addToPayBtnText}>
+                  {showAddToPay ? 'Close' : 'Add To Pay'}
+                </Text>
+              </Pressable>
+            </View>
+
+            {showAddToPay && (
+              <View style={styles.toPayForm}>
+                <Text style={styles.splitLabel}>Who do you have to pay?</Text>
+                {knownPeople.length > 0 && (
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={{ gap: 6 }}
+                  >
+                    {knownPeople.map((person) => (
+                      <Pressable
+                        key={person}
+                        style={[
+                          styles.catChip,
+                          toPayPerson.toLowerCase() === person.toLowerCase() && styles.catChipActive,
+                        ]}
+                        onPress={() => setToPayPerson(person)}
+                      >
+                        <Text
+                          style={[
+                            styles.catText,
+                            toPayPerson.toLowerCase() === person.toLowerCase() &&
+                              styles.catTextActive,
+                          ]}
+                        >
+                          {person}
+                        </Text>
+                      </Pressable>
+                    ))}
+                  </ScrollView>
+                )}
+                <TextInput
+                  style={styles.input}
+                  value={toPayPerson}
+                  onChangeText={setToPayPerson}
+                  placeholder="Person name (e.g. Swaraj)"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <TextInput
+                  style={styles.input}
+                  value={toPayAmount}
+                  onChangeText={setToPayAmount}
+                  keyboardType="decimal-pad"
+                  placeholder="Amount to pay (₹)"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <TextInput
+                  style={styles.input}
+                  value={toPayNote}
+                  onChangeText={setToPayNote}
+                  placeholder="Reason / note (optional)"
+                  placeholderTextColor={Colors.textMuted}
+                />
+                <Pressable style={styles.addBtn} onPress={() => void handleAddToPay()}>
+                  <Check size={16} color={Colors.primaryText} />
+                  <Text style={styles.addBtnText}>Save To Pay</Text>
+                </Pressable>
+              </View>
+            )}
+
+            {toPayPeople.length === 0 ? (
+              <Text style={styles.emptyText}>Nothing to pay right now ✓</Text>
+            ) : (
+              toPayPeople.map((p) => (
+                <View key={p.person} style={styles.personRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txTitle}>{p.person}</Text>
+                    <Text style={styles.txMeta}>
+                      Pay ₹{Math.abs(p.net).toLocaleString('en-IN')} from{' '}
+                      {accounts.find((a) => a.id === activeAccountId)?.name ?? 'Account'}
+                    </Text>
+                  </View>
                   <View style={styles.rowGapSmall}>
-                    <Text
-                      style={[
-                        styles.txAmt,
-                        { color: p.net > 0 ? Colors.success : Colors.danger },
-                      ]}
+                    <Text style={[styles.txAmt, { color: Colors.danger }]}>
+                      ₹{Math.abs(p.net).toLocaleString('en-IN')}
+                    </Text>
+                    <Pressable
+                      style={styles.settleBtn}
+                      onPress={() => void handleSettlePerson(p.person, p.net)}
                     >
-                      {p.net > 0 ? `Gets ₹${p.net}` : `Owe ₹${Math.abs(p.net)}`}
+                      <Check size={13} color={Colors.primaryText} />
+                      <Text style={styles.settleBtnText}>Pay &amp; Settle</Text>
+                    </Pressable>
+                  </View>
+                </View>
+              ))
+            )}
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.cardTitle}>Owed to You / Advance</Text>
+            {toReceivePeople.length === 0 ? (
+              <Text style={styles.emptyText}>
+                No pending dues owed to you. Use &quot;Gave&quot; or &quot;Split&quot; to track.
+              </Text>
+            ) : (
+              toReceivePeople.map((p) => (
+                <View key={p.person} style={styles.personRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txTitle}>{p.person}</Text>
+                    <Text style={styles.txMeta}>
+                      Gave ₹{p.lent} • Used / Got ₹{p.received}
+                    </Text>
+                  </View>
+                  <View style={styles.rowGapSmall}>
+                    <Text style={[styles.txAmt, { color: Colors.success }]}>
+                      ₹{p.net.toLocaleString('en-IN')}
                     </Text>
                     <Pressable
                       style={styles.settleBtn}
@@ -874,11 +1030,28 @@ export default function FinanceScreen() {
                       <Text style={styles.settleBtnText}>Settle</Text>
                     </Pressable>
                   </View>
-                )}
-              </View>
-            ))
+                </View>
+              ))
+            )}
+          </View>
+
+          {settledPeople.length > 0 && (
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Settled</Text>
+              {settledPeople.map((p) => (
+                <View key={p.person} style={styles.personRow}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.txTitle}>{p.person}</Text>
+                    <Text style={styles.txMeta}>
+                      Gave ₹{p.lent} • Got ₹{p.received}
+                    </Text>
+                  </View>
+                  <Text style={[styles.settledText, { color: Colors.success }]}>Settled ✓</Text>
+                </View>
+              ))}
+            </View>
           )}
-        </View>
+        </>
       )}
 
       {/* TAB 3: BREAKDOWN CHARTS */}
@@ -1287,6 +1460,39 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   settleBtnText: { color: Colors.primaryText, fontSize: 11, fontWeight: '700' },
+  toPayBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.bg,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+  },
+  toPayBannerText: { color: Colors.danger, fontSize: 12, fontWeight: '700' },
+  toPayBannerLink: { color: Colors.primary, fontSize: 12, fontWeight: '800' },
+  addToPayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: Colors.primarySoft,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+  },
+  addToPayBtnText: { color: Colors.primary, fontSize: 11, fontWeight: '700' },
+  toPayForm: {
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 8,
+  },
   pieRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   legendRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   legendDot: { width: 9, height: 9, borderRadius: 5 },
