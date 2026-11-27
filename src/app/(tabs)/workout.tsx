@@ -169,6 +169,35 @@ export default function WorkoutScreen() {
 
   const isAdHocCurrent = currentEx ? Boolean(adHocMap[currentEx.exercise_id]) : false;
 
+  const isCardioCurrent = useMemo(() => {
+    const ex = currentEx?.exercise;
+    if (!ex) return false;
+    const name = ex.name.toLowerCase();
+    return (
+      ex.primary_muscle === 'cardio' ||
+      name.includes('cardio') ||
+      name.includes('walking') ||
+      name.includes('cycling') ||
+      name.includes('running') ||
+      name.includes('treadmill')
+    );
+  }, [currentEx]);
+
+  const isExerciseDone = (ex: (typeof sessionExercises)[number]) => {
+    if (ex.status === 'completed') return true;
+    const target =
+      todaySplit?.exercises.find((e) => e.exercise_id === ex.exercise_id)?.target_sets ?? 3;
+    const doneSets = sets.filter((s) => s.exercise_id === ex.exercise_id && s.reps > 0).length;
+    return doneSets >= Math.max(1, target);
+  };
+
+  const findNextIncompleteIndex = (startIdx: number) => {
+    for (let i = startIdx; i < sessionExercises.length; i++) {
+      if (!isExerciseDone(sessionExercises[i])) return i;
+    }
+    return -1;
+  };
+
   const handleLaunchOverlay = async () => {
     if (!GymAndroidNative.isSupported()) {
       Alert.alert(
@@ -247,8 +276,9 @@ export default function WorkoutScreen() {
   const advanceToNextExerciseOrFinish = () => {
     setRepsInput('');
     setWeightInput('');
-    if (currentExIdx + 1 < sessionExercises.length) {
-      setCurrentExIdx((i) => i + 1);
+    const nextIdx = findNextIncompleteIndex(currentExIdx + 1);
+    if (nextIdx !== -1) {
+      setCurrentExIdx(nextIdx);
     } else {
       setStage('post_exercises_choice');
     }
@@ -257,7 +287,7 @@ export default function WorkoutScreen() {
   const handleCompleteSet = async (action: 'auto' | 'next_set' | 'next_exercise') => {
     if (!currentEx) return;
     const reps = parseInt(repsInput, 10);
-    const weight = parseFloat(weightInput) || 0;
+    const weight = isCardioCurrent ? 0 : parseFloat(weightInput) || 0;
 
     if (action === 'next_exercise' && (!repsInput.trim() || Number.isNaN(reps) || reps < 0)) {
       await setExerciseStatus(currentEx.exercise_id, 'completed');
@@ -562,8 +592,13 @@ export default function WorkoutScreen() {
           <Pressable
             style={styles.primaryBtn}
             onPress={() => {
-              setCurrentExIdx(0);
-              setStage(sessionExercises.length > 0 ? 'exercises' : 'post_exercises_choice');
+              const firstIncomplete = findNextIncompleteIndex(0);
+              if (firstIncomplete !== -1) {
+                setCurrentExIdx(firstIncomplete);
+                setStage('exercises');
+              } else {
+                setStage('post_exercises_choice');
+              }
             }}
           >
             <Text style={styles.primaryBtnText}>Start Exercises</Text>
@@ -642,8 +677,10 @@ export default function WorkoutScreen() {
             {/* Current Set Input */}
             <View style={styles.activeSetBox}>
               <View style={styles.rowBetween}>
-                <Text style={styles.cardTitle}>Set {currentExSets.length + 1}</Text>
-                {currentExSets.length > 0 && (
+                <Text style={styles.cardTitle}>
+                  {isCardioCurrent ? 'Cardio Duration' : `Set ${currentExSets.length + 1}`}
+                </Text>
+                {!isCardioCurrent && currentExSets.length > 0 && (
                   <Pressable style={styles.sameWeightBtn} onPress={handleSameWeight}>
                     <Text style={styles.sameWeightText}>Same Weight</Text>
                   </Pressable>
@@ -652,27 +689,31 @@ export default function WorkoutScreen() {
 
               <View style={styles.rowGap}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Repetitions</Text>
+                  <Text style={styles.miniLabel}>
+                    {isCardioCurrent ? 'Duration (minutes)' : 'Repetitions'}
+                  </Text>
                   <TextInput
                     style={styles.input}
                     keyboardType="number-pad"
-                    placeholder="e.g. 15"
+                    placeholder={isCardioCurrent ? 'e.g. 20' : 'e.g. 15'}
                     placeholderTextColor={Colors.textMuted}
                     value={repsInput}
                     onChangeText={setRepsInput}
                   />
                 </View>
-                <View style={{ flex: 1 }}>
-                  <Text style={styles.miniLabel}>Weight (kg)</Text>
-                  <TextInput
-                    style={styles.input}
-                    keyboardType="decimal-pad"
-                    placeholder="e.g. 18"
-                    placeholderTextColor={Colors.textMuted}
-                    value={weightInput}
-                    onChangeText={setWeightInput}
-                  />
-                </View>
+                {!isCardioCurrent && (
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.miniLabel}>Weight (kg)</Text>
+                    <TextInput
+                      style={styles.input}
+                      keyboardType="decimal-pad"
+                      placeholder="e.g. 18"
+                      placeholderTextColor={Colors.textMuted}
+                      value={weightInput}
+                      onChangeText={setWeightInput}
+                    />
+                  </View>
+                )}
               </View>
 
               {isAdHocCurrent ? (
