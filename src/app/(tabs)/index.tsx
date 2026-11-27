@@ -15,6 +15,7 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
+import * as Updates from 'expo-updates';
 import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Calendar,
@@ -115,6 +116,18 @@ export default function TodayScreen() {
     setRefreshing(true);
     setSyncError(null);
     try {
+      if (!__DEV__ && Updates.isEnabled) {
+        try {
+          const check = await Updates.checkForUpdateAsync();
+          if (check.isAvailable) {
+            await Updates.fetchUpdateAsync();
+            await Updates.reloadAsync();
+            return;
+          }
+        } catch {
+          // Ignore OTA check errors when offline
+        }
+      }
       const { error } = await supabase
         .from('workout_sessions')
         .select('id')
