@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.IBinder
@@ -15,7 +16,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
@@ -33,11 +33,18 @@ class FloatingLoggerService : Service() {
   private var exerciseName: String = "Workout"
   private var weightKg: Double = 20.0
   private var reps: Int = 10
+  private var loggedSetsCount: Int = 0
+
+  private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    exerciseId = intent?.getStringExtra("exerciseId") ?: exerciseId
+    val nextId = intent?.getStringExtra("exerciseId")
+    if (nextId != null && nextId != exerciseId) {
+      loggedSetsCount = 0
+    }
+    exerciseId = nextId ?: exerciseId
     exerciseName = intent?.getStringExtra("exerciseName") ?: exerciseName
     weightKg = intent?.getDoubleExtra("weightKg", weightKg) ?: weightKg
     reps = intent?.getIntExtra("reps", reps) ?: reps
@@ -71,8 +78,8 @@ class FloatingLoggerService : Service() {
     }
 
     val notification = builder
-      .setContentTitle("GYM Mini-Logger Active")
-      .setContentText("Logging: $exerciseName")
+      .setContentTitle("Srajan's Mini-Logger")
+      .setContentText("Tracking: $exerciseName")
       .setSmallIcon(android.R.drawable.ic_menu_edit)
       .build()
 
@@ -97,18 +104,13 @@ class FloatingLoggerService : Service() {
       PixelFormat.TRANSLUCENT
     ).apply {
       gravity = Gravity.TOP or Gravity.START
-      x = 40
-      y = 260
+      x = dp(16)
+      y = dp(110)
     }
 
     val container = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
-      setPadding(24, 18, 24, 18)
-      background = GradientDrawable().apply {
-        setColor(Color.parseColor("#EE141923"))
-        cornerRadius = 32f
-        setStroke(2, Color.parseColor("#3B82F6"))
-      }
+      elevation = dp(8).toFloat()
     }
 
     var initialX = 0
@@ -147,85 +149,246 @@ class FloatingLoggerService : Service() {
     renderState()
   }
 
+  private fun formatWeight(w: Double): String {
+    return if (w % 1.0 == 0.0) "${w.toInt()}" else String.format("%.1f", w)
+  }
+
   private fun renderState() {
     val root = overlayView as? LinearLayout ?: return
     root.removeAllViews()
 
     if (!isExpanded) {
+      root.setPadding(dp(14), dp(10), dp(14), dp(10))
+      root.background = GradientDrawable().apply {
+        setColor(Color.parseColor("#1F4D3D"))
+        cornerRadius = dp(24).toFloat()
+        setStroke(dp(1), Color.parseColor("#E5E0D5"))
+      }
+
       val bubble = TextView(this).apply {
-        text = "GYM • ${weightKg}kg×$reps"
+        text = "GYM  •  ${formatWeight(weightKg)}kg × $reps"
         setTextColor(Color.WHITE)
         textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
       }
       root.addView(bubble)
       return
     }
 
-    val title = TextView(this).apply {
+    root.setPadding(dp(16), dp(14), dp(16), dp(14))
+    root.background = GradientDrawable().apply {
+      setColor(Color.parseColor("#F7F5F0"))
+      cornerRadius = dp(20).toFloat()
+      setStroke(dp(1), Color.parseColor("#1F4D3D"))
+    }
+
+    // Header Row: Exercise Name + Set Badge + Min/Close
+    val headerRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      layoutParams = LinearLayout.LayoutParams(
+        dp(270),
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      )
+    }
+
+    val titleCol = LinearLayout(this).apply {
+      orientation = LinearLayout.VERTICAL
+      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    }
+
+    val titleView = TextView(this).apply {
       text = exerciseName
-      setTextColor(Color.WHITE)
-      textSize = 14f
+      setTextColor(Color.parseColor("#1A1917"))
+      textSize = 15f
+      typeface = Typeface.DEFAULT_BOLD
+      maxLines = 1
     }
-    root.addView(title)
+    val subView = TextView(this).apply {
+      text = "Set #${loggedSetsCount + 1}"
+      setTextColor(Color.parseColor("#1F4D3D"))
+      textSize = 11f
+      typeface = Typeface.DEFAULT_BOLD
+    }
+    titleCol.addView(titleView)
+    titleCol.addView(subView)
+    headerRow.addView(titleCol)
 
-    val valueText = TextView(this).apply {
-      text = "${weightKg} kg  ×  $reps reps"
-      setTextColor(Color.parseColor("#3B82F6"))
-      textSize = 16f
-      setPadding(0, 8, 0, 8)
-    }
-    root.addView(valueText)
-
-    val weightRow = LinearLayout(this).apply {
-      orientation = LinearLayout.HORIZONTAL
-    }
-    weightRow.addView(makeBtn("-2.5kg") {
-      weightKg = maxOf(0.0, weightKg - 2.5)
-      renderState()
-    })
-    weightRow.addView(makeBtn("+2.5kg") {
-      weightKg += 2.5
-      renderState()
-    })
-    weightRow.addView(makeBtn("-1 Rep") {
-      reps = maxOf(1, reps - 1)
-      renderState()
-    })
-    weightRow.addView(makeBtn("+1 Rep") {
-      reps += 1
-      renderState()
-    })
-    root.addView(weightRow)
-
-    val actionRow = LinearLayout(this).apply {
-      orientation = LinearLayout.HORIZONTAL
-      setPadding(0, 10, 0, 0)
-    }
-    actionRow.addView(makeBtn("Save Set", "#22C55E") {
-      savePendingSet()
-    })
-    actionRow.addView(makeBtn("+1 Water", "#3B82F6") {
-      incrementPendingWater()
-    })
-    actionRow.addView(makeBtn("Min", "#475569") {
+    headerRow.addView(makeChipBtn("—", "#EFECE5", "#1A1917", 0, 6) {
       isExpanded = false
       renderState()
     })
-    actionRow.addView(makeBtn("✕", "#EF4444") {
+    headerRow.addView(makeChipBtn("✕", "#F7E6E6", "#B84343", 0, 0) {
       stopSelf()
     })
+    root.addView(headerRow)
+
+    // Weight Control Row
+    root.addView(makeStepperRow(
+      label = "WEIGHT",
+      valueText = "${formatWeight(weightKg)} kg",
+      minusLabel = "-2.5",
+      plusLabel = "+2.5",
+      onMinus = {
+        weightKg = maxOf(0.0, weightKg - 2.5)
+        renderState()
+      },
+      onPlus = {
+        weightKg += 2.5
+        renderState()
+      }
+    ))
+
+    // Reps Control Row
+    root.addView(makeStepperRow(
+      label = "REPS",
+      valueText = "$reps reps",
+      minusLabel = "-1",
+      plusLabel = "+1",
+      onMinus = {
+        reps = maxOf(1, reps - 1)
+        renderState()
+      },
+      onPlus = {
+        reps += 1
+        renderState()
+      }
+    ))
+
+    // Action Row: Log Set + Water
+    val actionRow = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        topMargin = dp(10)
+      }
+    }
+
+    val logBtn = makeActionBtn("✓ Log Set #${loggedSetsCount + 1}", "#1F4D3D", Color.WHITE, 2f, 8) {
+      savePendingSet()
+      loggedSetsCount += 1
+      renderState()
+    }
+    val waterBtn = makeActionBtn("+1 Water", "#FFFFFF", Color.parseColor("#1F4D3D"), 1f, 0, "#1F4D3D") {
+      incrementPendingWater()
+    }
+
+    actionRow.addView(logBtn)
+    actionRow.addView(waterBtn)
     root.addView(actionRow)
   }
 
-  private fun makeBtn(label: String, bgHex: String = "#1C2331", onClick: () -> Unit): Button {
-    return Button(this).apply {
+  private fun makeStepperRow(
+    label: String,
+    valueText: String,
+    minusLabel: String,
+    plusLabel: String,
+    onMinus: () -> Unit,
+    onPlus: () -> Unit
+  ): LinearLayout {
+    val row = LinearLayout(this).apply {
+      orientation = LinearLayout.HORIZONTAL
+      gravity = Gravity.CENTER_VERTICAL
+      setPadding(dp(10), dp(8), dp(10), dp(8))
+      background = GradientDrawable().apply {
+        setColor(Color.WHITE)
+        cornerRadius = dp(12).toFloat()
+        setStroke(1, Color.parseColor("#E5E0D5"))
+      }
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.MATCH_PARENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        topMargin = dp(8)
+      }
+    }
+
+    val lbl = TextView(this).apply {
       text = label
-      textSize = 11f
-      setTextColor(Color.WHITE)
-      setPadding(12, 6, 12, 6)
+      setTextColor(Color.parseColor("#6B665E"))
+      textSize = 10f
+      typeface = Typeface.DEFAULT_BOLD
+      layoutParams = LinearLayout.LayoutParams(dp(48), LinearLayout.LayoutParams.WRAP_CONTENT)
+    }
+    row.addView(lbl)
+
+    row.addView(makeChipBtn(minusLabel, "#EFECE5", "#1A1917", 0, 8, onMinus))
+
+    val valView = TextView(this).apply {
+      text = valueText
+      setTextColor(Color.parseColor("#1A1917"))
+      textSize = 15f
+      typeface = Typeface.DEFAULT_BOLD
+      gravity = Gravity.CENTER
+      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+    }
+    row.addView(valView)
+
+    row.addView(makeChipBtn(plusLabel, "#1F4D3D", "#FFFFFF", 8, 0, onPlus))
+    return row
+  }
+
+  private fun makeChipBtn(
+    label: String,
+    bgHex: String,
+    textHex: String,
+    leftMarginDp: Int,
+    rightMarginDp: Int,
+    onClick: () -> Unit
+  ): TextView {
+    return TextView(this).apply {
+      text = label
+      textSize = 12f
+      typeface = Typeface.DEFAULT_BOLD
+      setTextColor(Color.parseColor(textHex))
+      gravity = Gravity.CENTER
+      setPadding(dp(12), dp(7), dp(12), dp(7))
       background = GradientDrawable().apply {
         setColor(Color.parseColor(bgHex))
-        cornerRadius = 16f
+        cornerRadius = dp(10).toFloat()
+      }
+      layoutParams = LinearLayout.LayoutParams(
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        LinearLayout.LayoutParams.WRAP_CONTENT
+      ).apply {
+        leftMargin = dp(leftMarginDp)
+        rightMargin = dp(rightMarginDp)
+      }
+      setOnClickListener { onClick() }
+    }
+  }
+
+  private fun makeActionBtn(
+    label: String,
+    bgHex: String,
+    textColor: Int,
+    weight: Float,
+    rightMarginDp: Int,
+    strokeHex: String? = null,
+    onClick: () -> Unit
+  ): TextView {
+    return TextView(this).apply {
+      text = label
+      textSize = 13f
+      typeface = Typeface.DEFAULT_BOLD
+      setTextColor(textColor)
+      gravity = Gravity.CENTER
+      setPadding(dp(10), dp(11), dp(10), dp(11))
+      background = GradientDrawable().apply {
+        setColor(Color.parseColor(bgHex))
+        cornerRadius = dp(12).toFloat()
+        if (strokeHex != null) {
+          setStroke(dp(1), Color.parseColor(strokeHex))
+        }
+      }
+      layoutParams = LinearLayout.LayoutParams(
+        0,
+        LinearLayout.LayoutParams.WRAP_CONTENT,
+        weight
+      ).apply {
+        rightMargin = dp(rightMarginDp)
       }
       setOnClickListener { onClick() }
     }
@@ -241,7 +404,7 @@ class FloatingLoggerService : Service() {
       put("loggedAt", System.currentTimeMillis())
     })
     prefs.edit().putString("pending_sets", arr.toString()).apply()
-    Toast.makeText(this, "Saved ${weightKg}kg × $reps", Toast.LENGTH_SHORT).show()
+    Toast.makeText(this, "Logged Set #${loggedSetsCount + 1}: ${formatWeight(weightKg)}kg × $reps", Toast.LENGTH_SHORT).show()
   }
 
   private fun incrementPendingWater() {
