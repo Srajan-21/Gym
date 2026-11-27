@@ -17,6 +17,8 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Eye,
+  EyeOff,
   Pencil,
   PieChart,
   Plus,
@@ -107,6 +109,7 @@ export default function FinanceScreen() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [subTab, setSubTab] = useState<'ledger' | 'people' | 'stats'>('ledger');
   const [editingPastDay, setEditingPastDay] = useState(false);
+  const [showBalances, setShowBalances] = useState(false);
 
   // Quick-Add state
   const [selectedAccountId, setSelectedAccountId] = useState<string>(accounts[0]?.id ?? 'acc_sbi');
@@ -423,43 +426,62 @@ export default function FinanceScreen() {
       {/* Hero Balance & Period Report Card */}
       <View style={styles.heroCard}>
         <View style={styles.rowBetween}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={styles.kicker}>
               AS OF {formatReadableDate(selectedDate).toUpperCase()} • TOTAL LEFT
             </Text>
             <Text
               style={[
                 styles.heroAmount,
-                totalLeftAsOfDate !== null && totalLeftAsOfDate < 0 && { color: Colors.danger },
+                showBalances &&
+                  totalLeftAsOfDate !== null &&
+                  totalLeftAsOfDate < 0 && { color: Colors.danger },
               ]}
             >
               {totalLeftAsOfDate !== null
-                ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                ? showBalances
+                  ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                  : '₹•••••'
                 : 'No data'}
             </Text>
             {totalStartAsOfDate !== null && (
               <Text style={styles.startOfDayText}>
-                Start of day: ₹
-                {totalStartAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+                Start of day:{' '}
+                {showBalances
+                  ? `₹${totalStartAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                  : '₹•••••'}
               </Text>
             )}
           </View>
-          {reportPeriod === 'daily' && isPastDate && (
+          <View style={styles.rowGapSmall}>
             <Pressable
-              style={[styles.editPastBtn, editingPastDay && styles.editPastBtnActive]}
-              onPress={() => setEditingPastDay((v) => !v)}
+              style={styles.eyeBtn}
+              onPress={() => setShowBalances((v) => !v)}
+              hitSlop={8}
             >
-              <Pencil size={13} color={editingPastDay ? Colors.primaryText : Colors.gold} />
-              <Text
-                style={[
-                  styles.editPastText,
-                  editingPastDay && { color: Colors.primaryText },
-                ]}
-              >
-                {editingPastDay ? 'Done' : 'Edit Day'}
-              </Text>
+              {showBalances ? (
+                <EyeOff size={17} color={Colors.textSecondary} />
+              ) : (
+                <Eye size={17} color={Colors.primary} />
+              )}
             </Pressable>
-          )}
+            {reportPeriod === 'daily' && isPastDate && (
+              <Pressable
+                style={[styles.editPastBtn, editingPastDay && styles.editPastBtnActive]}
+                onPress={() => setEditingPastDay((v) => !v)}
+              >
+                <Pencil size={13} color={editingPastDay ? Colors.primaryText : Colors.gold} />
+                <Text
+                  style={[
+                    styles.editPastText,
+                    editingPastDay && { color: Colors.primaryText },
+                  ]}
+                >
+                  {editingPastDay ? 'Done' : 'Edit Day'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
 
         {/* Accounts Strip */}
@@ -480,7 +502,9 @@ export default function FinanceScreen() {
                 <Text style={styles.accountName}>{acc.name}</Text>
                 <Text style={styles.accountBal}>
                   {bal !== null
-                    ? `₹${bal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                    ? showBalances
+                      ? `₹${bal.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                      : '₹••••'
                     : '—'}
                 </Text>
               </Pressable>
@@ -1263,6 +1287,16 @@ const styles = StyleSheet.create({
   kicker: { color: Colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
   heroAmount: { color: Colors.text, fontSize: 32, fontWeight: '800', fontVariant: ['tabular-nums'] },
   startOfDayText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  eyeBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   editPastBtn: {
     flexDirection: 'row',
     alignItems: 'center',
