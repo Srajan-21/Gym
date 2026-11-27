@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { addDays } from '../context/DateContext';
 import { getCachedJson, getTodayDateString, setCachedJson } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 
@@ -21,12 +22,12 @@ export interface FinanceAccount {
   id: string;
   name: string;
   openingBalance: number;
-  openingDate: string; // YYYY-MM-DD (closing balance as of this date)
+  openingDate: string; // YYYY-MM-DD (balance at the BEGINNING of this date)
 }
 
 export interface FinanceTx {
   id: string;
-  accountId: string;
+  accountId: string; // account id, or 'external' when paid from prior advance/person
   type: TxType;
   amount: number;
   category: string;
@@ -41,40 +42,15 @@ export interface PersonBalance {
   person: string;
   lent: number;
   received: number;
-  net: number;
+  net: number; // > 0 means they owe you / hold your money
 }
 
 const DEFAULT_ACCOUNTS: FinanceAccount[] = [
   {
     id: 'acc_sbi',
     name: 'SBI',
-    openingBalance: 2280.67,
+    openingBalance: 2300.67,
     openingDate: '2026-11-27',
-  },
-];
-
-const INITIAL_SEED_TXS: FinanceTx[] = [
-  {
-    id: 'tx_seed_20261127_1',
-    accountId: 'acc_sbi',
-    type: 'expense',
-    amount: 20,
-    category: 'Travel / Auto',
-    note: 'Rickshaw to office',
-    paymentMode: 'UPI',
-    date: '2026-11-27',
-    createdAt: '2026-11-27T04:30:00.000Z',
-  },
-  {
-    id: 'tx_seed_20261127_2',
-    accountId: 'acc_sbi',
-    type: 'expense',
-    amount: 110,
-    category: 'Food / Mess',
-    note: 'Egg fried rice canteen',
-    paymentMode: 'UPI',
-    date: '2026-11-27',
-    createdAt: '2026-11-27T08:00:00.000Z',
   },
 ];
 
@@ -82,31 +58,25 @@ export function useFinance() {
   const { user } = useAuth();
   const txKey = `gym_finance_tx_${user.id}_v1`;
   const accKey = `gym_finance_accounts_${user.id}_v1`;
-  const budgetKey = `gym_finance_budget_${user.id}_v1`;
 
   const [accounts, setAccounts] = useState<FinanceAccount[]>(DEFAULT_ACCOUNTS);
-  const [transactions, setTransactions] = useState<FinanceTx[]>(INITIAL_SEED_TXS);
-  const [monthlyBudget, setMonthlyBudget] = useState<number>(15000);
+  const [transactions, setTransactions] = useState<FinanceTx[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [cachedTx, cachedAcc, cachedBudget] = await Promise.all([
+      const [cachedTx, cachedAcc] = await Promise.all([
         getCachedJson<FinanceTx[]>(txKey),
         getCachedJson<FinanceAccount[]>(accKey),
-        getCachedJson<number>(budgetKey),
       ]);
       if (!cancelled) {
-        if (cachedTx && cachedTx.length > 0) setTransactions(cachedTx);
+        if (cachedTx) setTransactions(cachedTx);
         if (cachedAcc && cachedAcc.length > 0) setAccounts(cachedAcc);
-        if (typeof cachedBudget === 'number' && cachedBudget > 0) {
-          setMonthlyBudget(cachedBudget);
-        }
       }
 
       try {
-        const [{ data: accRows }, { data: txRows }, { data: budgetRow }] = await Promise.all([
+        const [{ data: accRows }, { data: txRows }] = await Promise.all([
           supabase
             .from('finance_accounts')
             .select('*')
@@ -117,11 +87,6 @@ export function useFinance() {
             .select('*')
             .eq('user_id', user.id)
             .order('created_at', { ascending: false }),
-          supabase
-            .from('finance_budgets')
-            .select('monthly_budget')
-            .eq('user_id', user.id)
-            .maybeSingle(),
         ]);
 
         if (!cancelled && accRows && accRows.length > 0) {
@@ -133,20 +98,9 @@ export function useFinance() {
           }));
           setAccounts(mappedAcc);
           await setCachedJson(accKey, mappedAcc);
-        } else if (!cancelled && accRows && accRows.length === 0) {
-          // Seed SBI account on first sync if table exists & is empty
-          await supabase.from('finance_accounts').upsert(
-            DEFAULT_ACCOUNTS.map((a) => ({
-              id: a.id,
-              user_id: user.id,
-              name: a.name,
-              opening_balance: a.openingBalance,
-              opening_date: a.openingDate,
-            }))
-          );
         }
 
-        if (!cancelled && txRows && txRows.length > 0) {
+        if (!cancelled && txRows) {
           const mapped: FinanceTx[] = txRows.map((r) => ({
             id: r.id,
             accountId: r.account_id ?? 'acc_sbi',
@@ -161,28 +115,6 @@ export function useFinance() {
           }));
           setTransactions(mapped);
           await setCachedJson(txKey, mapped);
-        } else if (!cancelled && txRows && txRows.length === 0) {
-          await supabase.from('finance_transactions').upsert(
-            INITIAL_SEED_TXS.map((tx) => ({
-              id: tx.id,
-              user_id: user.id,
-              account_id: tx.accountId,
-              type: tx.type,
-              amount: tx.amount,
-              category: tx.category,
-              note: tx.note,
-              person: tx.person ?? null,
-              payment_mode: tx.paymentMode,
-              log_date: tx.date,
-              created_at: tx.createdAt,
-            }))
-          );
-        }
-
-        if (!cancelled && budgetRow?.monthly_budget != null) {
-          const b = Number(budgetRow.monthly_budget);
-          setMonthlyBudget(b);
-          await setCachedJson(budgetKey, b);
         }
       } catch {
         // Fallback to AsyncStorage cache if offline
@@ -193,7 +125,7 @@ export function useFinance() {
     return () => {
       cancelled = true;
     };
-  }, [accKey, budgetKey, txKey, user.id]);
+  }, [accKey, txKey, user.id]);
 
   const addAccount = useCallback(
     async (name: string, openingBalance: number, openingDate: string) => {
@@ -219,8 +151,8 @@ export function useFinance() {
   );
 
   const updateAccountBalance = useCallback(
-    async (accountId: string, newBalance: number, asOfDate: string) => {
-      const rounded = Math.round(newBalance * 100) / 100;
+    async (accountId: string, newOpeningBalance: number, asOfDate: string) => {
+      const rounded = Math.round(newOpeningBalance * 100) / 100;
       const next = accounts.map((a) =>
         a.id === accountId ? { ...a, openingBalance: rounded, openingDate: asOfDate } : a
       );
@@ -286,6 +218,7 @@ export function useFinance() {
       note?: string;
       people: string[];
       includeSelf: boolean;
+      paidByPerson?: string; // If a friend paid from advance they held from you
       paymentMode: PaymentMode;
       date: string;
     }) => {
@@ -295,7 +228,6 @@ export function useFinance() {
       const ways = uniquePeople.length + (params.includeSelf ? 1 : 0);
       if (ways === 0) return;
 
-      const accId = params.accountId ?? accounts[0]?.id ?? 'acc_sbi';
       const share = Math.round((params.totalAmount / ways) * 100) / 100;
       const baseNote = params.note?.trim()
         ? `${params.note.trim()} (Split ${ways} ways)`
@@ -303,35 +235,55 @@ export function useFinance() {
       const nowIso = new Date().toISOString();
       const created: FinanceTx[] = [];
 
-      if (params.includeSelf) {
-        created.push({
-          id: `tx_${Date.now()}_self_${Math.random().toString(36).slice(2, 5)}`,
-          accountId: accId,
-          type: 'expense',
-          amount: share,
-          category: params.category,
-          note: baseNote,
-          paymentMode: params.paymentMode,
-          date: params.date,
-          createdAt: nowIso,
+      if (params.paidByPerson) {
+        // Paid by friend's advance: your share is an expense that reduces their balance (doesn't touch your bank)
+        if (params.includeSelf) {
+          created.push({
+            id: `tx_${Date.now()}_adv_${Math.random().toString(36).slice(2, 5)}`,
+            accountId: 'external',
+            type: 'expense',
+            amount: share,
+            category: params.category,
+            note: `${baseNote} • Paid by ${params.paidByPerson}`,
+            person: params.paidByPerson,
+            paymentMode: params.paymentMode,
+            date: params.date,
+            createdAt: nowIso,
+          });
+        }
+      } else {
+        const accId = params.accountId ?? accounts[0]?.id ?? 'acc_sbi';
+        if (params.includeSelf) {
+          created.push({
+            id: `tx_${Date.now()}_self_${Math.random().toString(36).slice(2, 5)}`,
+            accountId: accId,
+            type: 'expense',
+            amount: share,
+            category: params.category,
+            note: baseNote,
+            paymentMode: params.paymentMode,
+            date: params.date,
+            createdAt: nowIso,
+          });
+        }
+
+        uniquePeople.forEach((person, idx) => {
+          created.push({
+            id: `tx_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
+            accountId: accId,
+            type: 'lent',
+            amount: share,
+            category: params.category,
+            note: baseNote,
+            person,
+            paymentMode: params.paymentMode,
+            date: params.date,
+            createdAt: nowIso,
+          });
         });
       }
 
-      uniquePeople.forEach((person, idx) => {
-        created.push({
-          id: `tx_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 5)}`,
-          accountId: accId,
-          type: 'lent',
-          amount: share,
-          category: params.category,
-          note: baseNote,
-          person,
-          paymentMode: params.paymentMode,
-          date: params.date,
-          createdAt: nowIso,
-        });
-      });
-
+      if (created.length === 0) return;
       const next = [...created, ...transactions];
       setTransactions(next);
       await setCachedJson(txKey, next);
@@ -364,26 +316,10 @@ export function useFinance() {
     [transactions, txKey]
   );
 
-  const updateBudget = useCallback(
-    async (amount: number) => {
-      const valid = Math.max(0, Math.round(amount));
-      setMonthlyBudget(valid);
-      await setCachedJson(budgetKey, valid);
-      await supabase.from('finance_budgets').upsert(
-        {
-          user_id: user.id,
-          monthly_budget: valid,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id' }
-      );
-    },
-    [budgetKey, user.id]
-  );
-
   /**
-   * Computes expected balance for an account on `targetDate` by carrying forward
-   * from `account.openingDate` through all transactions on days > openingDate and <= targetDate.
+   * Computes account balance at the END of `targetDate` (inclusive), starting from
+   * `account.openingBalance` at the BEGINNING of `account.openingDate`.
+   * Returns null for dates strictly before `account.openingDate`.
    */
   const getAccountBalanceAsOf = useCallback(
     (account: FinanceAccount, targetDate: string): number | null => {
@@ -393,7 +329,7 @@ export function useFinance() {
       let bal = account.openingBalance;
       for (const tx of transactions) {
         if (tx.accountId !== account.id) continue;
-        if (tx.date > account.openingDate && tx.date <= targetDate) {
+        if (tx.date >= account.openingDate && tx.date <= targetDate) {
           if (tx.type === 'expense' || tx.type === 'lent') bal -= tx.amount;
           else bal += tx.amount;
         }
@@ -401,6 +337,18 @@ export function useFinance() {
       return Math.round(bal * 100) / 100;
     },
     [transactions]
+  );
+
+  /**
+   * Computes account balance at the BEGINNING of `targetDate` (i.e. previous day's closing balance).
+   */
+  const getAccountStartOfDay = useCallback(
+    (account: FinanceAccount, targetDate: string): number | null => {
+      if (targetDate < account.openingDate) return null;
+      if (targetDate === account.openingDate) return account.openingBalance;
+      return getAccountBalanceAsOf(account, addDays(targetDate, -1));
+    },
+    [getAccountBalanceAsOf]
   );
 
   const getPeriodReport = useCallback(
@@ -425,7 +373,9 @@ export function useFinance() {
           totalIncome += t.amount;
         } else if (t.type === 'lent') {
           totalLent += t.amount;
-          modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
+          if (t.accountId !== 'external') {
+            modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
+          }
         } else if (t.type === 'received') {
           totalReceived += t.amount;
         }
@@ -450,69 +400,30 @@ export function useFinance() {
     [transactions]
   );
 
-  const currentMonth = getTodayDateString().slice(0, 7);
-
-  const monthStats = useMemo(() => {
-    const monthTx = transactions.filter((t) => t.date.startsWith(currentMonth));
-    let totalSpent = 0;
-    let totalIncome = 0;
-    let totalLent = 0;
-    let totalReceived = 0;
-
-    const categoryTotals: Record<string, number> = {};
-    const modeTotals: Record<PaymentMode, number> = { UPI: 0, Cash: 0, Card: 0 };
-
-    for (const t of monthTx) {
-      if (t.type === 'expense') {
-        totalSpent += t.amount;
-        categoryTotals[t.category] = (categoryTotals[t.category] ?? 0) + t.amount;
-        modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
-      } else if (t.type === 'income') {
-        totalIncome += t.amount;
-      } else if (t.type === 'lent') {
-        totalLent += t.amount;
-        modeTotals[t.paymentMode] = (modeTotals[t.paymentMode] ?? 0) + t.amount;
-      } else if (t.type === 'received') {
-        totalReceived += t.amount;
-      }
-    }
-
-    const budgetUsedPct =
-      monthlyBudget > 0 ? Math.min(100, Math.round((totalSpent / monthlyBudget) * 100)) : 0;
-
-    const categoryBreakdown = Object.entries(categoryTotals)
-      .map(([category, amount]) => ({ category, amount }))
-      .sort((a, b) => b.amount - a.amount);
-
-    return {
-      totalSpent,
-      totalIncome,
-      totalLent,
-      totalReceived,
-      budgetUsedPct,
-      categoryBreakdown,
-      modeTotals,
-    };
-  }, [currentMonth, monthlyBudget, transactions]);
-
   const peopleBalances = useMemo<PersonBalance[]>(() => {
     const map = new Map<string, { display: string; lent: number; received: number }>();
     for (const t of transactions) {
-      if ((t.type !== 'lent' && t.type !== 'received') || !t.person) continue;
+      if (!t.person) continue;
       const key = t.person.toLowerCase();
       if (!map.has(key)) {
         map.set(key, { display: t.person, lent: 0, received: 0 });
       }
       const entry = map.get(key)!;
-      if (t.type === 'lent') entry.lent += t.amount;
-      else entry.received += t.amount;
+      if (t.type === 'lent') {
+        entry.lent += t.amount;
+      } else if (t.type === 'received') {
+        entry.received += t.amount;
+      } else if (t.type === 'expense' && t.accountId === 'external') {
+        // Paid by friend from the advance they held from you -> reduces what they owe you
+        entry.received += t.amount;
+      }
     }
 
     return Array.from(map.values())
       .map((e) => ({
         person: e.display,
-        lent: e.lent,
-        received: e.received,
+        lent: Math.round(e.lent * 100) / 100,
+        received: Math.round(e.received * 100) / 100,
         net: Math.round((e.lent - e.received) * 100) / 100,
       }))
       .sort((a, b) => Math.abs(b.net) - Math.abs(a.net));
@@ -526,18 +437,16 @@ export function useFinance() {
   return {
     accounts,
     transactions,
-    monthlyBudget,
-    monthStats,
     peopleBalances,
     knownPeople,
     loading,
     addAccount,
     updateAccountBalance,
     getAccountBalanceAsOf,
+    getAccountStartOfDay,
     getPeriodReport,
     addTransaction,
     addSplitTransaction,
     deleteTransaction,
-    updateBudget,
   };
 }

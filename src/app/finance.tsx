@@ -17,6 +17,7 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  Pencil,
   PieChart,
   Plus,
   Trash2,
@@ -93,6 +94,7 @@ export default function FinanceScreen() {
     addAccount,
     updateAccountBalance,
     getAccountBalanceAsOf,
+    getAccountStartOfDay,
     getPeriodReport,
     addTransaction,
     addSplitTransaction,
@@ -103,6 +105,7 @@ export default function FinanceScreen() {
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
   const [subTab, setSubTab] = useState<'ledger' | 'people' | 'stats'>('ledger');
+  const [editingPastDay, setEditingPastDay] = useState(false);
 
   // Quick-Add state
   const [selectedAccountId, setSelectedAccountId] = useState<string>(accounts[0]?.id ?? 'acc_sbi');
@@ -115,6 +118,7 @@ export default function FinanceScreen() {
   const [splitPeople, setSplitPeople] = useState<string[]>([]);
   const [splitIncludeSelf, setSplitIncludeSelf] = useState(true);
   const [splitNewPerson, setSplitNewPerson] = useState('');
+  const [paidByPerson, setPaidByPerson] = useState<string>('');
 
   // Account modal
   const [accountModalOpen, setAccountModalOpen] = useState(false);
@@ -127,10 +131,17 @@ export default function FinanceScreen() {
     : (accounts[0]?.id ?? 'acc_sbi');
 
   const accountBalancesForDate = accounts.map((acc) => getAccountBalanceAsOf(acc, selectedDate));
+  const accountStartsForDate = accounts.map((acc) => getAccountStartOfDay(acc, selectedDate));
   const hasAnyBalanceData = accountBalancesForDate.some((b) => b !== null);
   const totalLeftAsOfDate = hasAnyBalanceData
     ? accountBalancesForDate.reduce<number>((sum, b) => sum + (b ?? 0), 0)
     : null;
+  const totalStartAsOfDate = accountStartsForDate.some((b) => b !== null)
+    ? accountStartsForDate.reduce<number>((sum, b) => sum + (b ?? 0), 0)
+    : null;
+
+  const isPastDate = selectedDate < todayStr;
+  const canEditSelectedDate = !isPastDate || editingPastDay;
 
   const weekRange = useMemo(() => {
     const start = addDays(getWeekKey(todayStr), weekOffset * 7);
@@ -188,6 +199,7 @@ export default function FinanceScreen() {
         note: noteInput,
         people: allPeople,
         includeSelf: splitIncludeSelf,
+        paidByPerson: paidByPerson || undefined,
         paymentMode,
         date: selectedDate,
       });
@@ -196,6 +208,7 @@ export default function FinanceScreen() {
       setNoteInput('');
       setSplitNewPerson('');
       setSplitPeople([]);
+      setPaidByPerson('');
       return;
     }
 
@@ -352,20 +365,44 @@ export default function FinanceScreen() {
 
       {/* Hero Balance & Period Report Card */}
       <View style={styles.heroCard}>
-        <View>
-          <Text style={styles.kicker}>
-            AS OF {formatReadableDate(selectedDate).toUpperCase()} • TOTAL LEFT
-          </Text>
-          <Text
-            style={[
-              styles.heroAmount,
-              totalLeftAsOfDate !== null && totalLeftAsOfDate < 0 && { color: Colors.danger },
-            ]}
-          >
-            {totalLeftAsOfDate !== null
-              ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-              : 'No data'}
-          </Text>
+        <View style={styles.rowBetween}>
+          <View>
+            <Text style={styles.kicker}>
+              AS OF {formatReadableDate(selectedDate).toUpperCase()} • TOTAL LEFT
+            </Text>
+            <Text
+              style={[
+                styles.heroAmount,
+                totalLeftAsOfDate !== null && totalLeftAsOfDate < 0 && { color: Colors.danger },
+              ]}
+            >
+              {totalLeftAsOfDate !== null
+                ? `₹${totalLeftAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
+                : 'No data'}
+            </Text>
+            {totalStartAsOfDate !== null && (
+              <Text style={styles.startOfDayText}>
+                Start of day: ₹
+                {totalStartAsOfDate.toLocaleString('en-IN', { maximumFractionDigits: 2 })}
+              </Text>
+            )}
+          </View>
+          {reportPeriod === 'daily' && isPastDate && (
+            <Pressable
+              style={[styles.editPastBtn, editingPastDay && styles.editPastBtnActive]}
+              onPress={() => setEditingPastDay((v) => !v)}
+            >
+              <Pencil size={13} color={editingPastDay ? Colors.primaryText : Colors.gold} />
+              <Text
+                style={[
+                  styles.editPastText,
+                  editingPastDay && { color: Colors.primaryText },
+                ]}
+              >
+                {editingPastDay ? 'Done' : 'Edit Day'}
+              </Text>
+            </Pressable>
+          )}
         </View>
 
         {/* Accounts Strip */}
@@ -463,7 +500,7 @@ export default function FinanceScreen() {
       {/* TAB 1: QUICK ADD (in Daily) + PERIOD TRANSACTIONS REPORT */}
       {subTab === 'ledger' && (
         <>
-          {reportPeriod === 'daily' && (
+          {reportPeriod === 'daily' && canEditSelectedDate && (
             <View style={styles.card}>
               <Text style={styles.cardTitle}>3-Second Entry</Text>
 
@@ -604,6 +641,40 @@ export default function FinanceScreen() {
                       each
                     </Text>
                   )}
+
+                  {knownPeople.length > 0 && (
+                    <View style={{ gap: 4 }}>
+                      <Text style={styles.splitLabel}>Paid by:</Text>
+                      <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={{ gap: 8 }}
+                      >
+                        <Pressable
+                          style={[styles.catChip, !paidByPerson && styles.catChipActive]}
+                          onPress={() => setPaidByPerson('')}
+                        >
+                          <Text style={[styles.catText, !paidByPerson && styles.catTextActive]}>
+                            Me (My Account)
+                          </Text>
+                        </Pressable>
+                        {knownPeople.map((person) => {
+                          const active = paidByPerson.toLowerCase() === person.toLowerCase();
+                          return (
+                            <Pressable
+                              key={`paid_${person}`}
+                              style={[styles.catChip, active && styles.catChipActive]}
+                              onPress={() => setPaidByPerson(person)}
+                            >
+                              <Text style={[styles.catText, active && styles.catTextActive]}>
+                                {person} (Advance)
+                              </Text>
+                            </Pressable>
+                          );
+                        })}
+                      </ScrollView>
+                    </View>
+                  )}
                 </View>
               )}
 
@@ -741,8 +812,10 @@ export default function FinanceScreen() {
                         {tx.note ? ` • ${tx.note}` : ''}
                       </Text>
                       <Text style={styles.txMeta}>
-                        {tx.date} • {accounts.find((a) => a.id === tx.accountId)?.name ?? 'SBI'} •{' '}
-                        {tx.paymentMode}
+                        {tx.date} •{' '}
+                        {tx.accountId === 'external'
+                          ? `Paid by ${tx.person ?? 'Advance'}`
+                          : `${accounts.find((a) => a.id === tx.accountId)?.name ?? 'SBI'} • ${tx.paymentMode}`}
                       </Text>
                     </View>
                     <Text
@@ -979,6 +1052,23 @@ const styles = StyleSheet.create({
   rowGapSmall: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   kicker: { color: Colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
   heroAmount: { color: Colors.text, fontSize: 32, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  startOfDayText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  editPastBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+  },
+  editPastBtnActive: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
+  editPastText: { color: Colors.gold, fontSize: 12, fontWeight: '700' },
   heroStatsRow: {
     flexDirection: 'row',
     borderTopWidth: 1,
