@@ -389,14 +389,16 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
     setType: SetType;
     effort: EffortLevel;
   }) => {
-    if (!session) return;
-    const existingForExercise = sets.filter((s) => s.exercise_id === params.exerciseId);
+    const activeSession = latestRef.current.session ?? session;
+    if (!activeSession) return;
+    const currentSets = latestRef.current.sets;
+    const existingForExercise = currentSets.filter((s) => s.exercise_id === params.exerciseId);
     const setNumber = existingForExercise.length + 1;
 
     const { data, error } = await supabase
       .from('workout_sets')
       .insert({
-        session_id: session.id,
+        session_id: activeSession.id,
         exercise_id: params.exerciseId,
         set_number: setNumber,
         weight_kg: params.weightKg,
@@ -408,12 +410,16 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
       .single();
 
     if (error) throw error;
-    const nextSets = [...sets, data as WorkoutSet];
+    const inserted = data as WorkoutSet;
+    const nextSets = [...latestRef.current.sets, inserted];
+    latestRef.current = { ...latestRef.current, sets: nextSets };
     setSets(nextSets);
     persistCache({ sets: nextSets });
 
     // Automatically mark exercise as 'in_progress' if it was 'pending'
-    const currentEx = sessionExercises.find((se) => se.exercise_id === params.exerciseId);
+    const currentEx = latestRef.current.sessionExercises.find(
+      (se) => se.exercise_id === params.exerciseId
+    );
     if (currentEx && currentEx.status === 'pending') {
       await setExerciseStatus(params.exerciseId, 'in_progress');
     }

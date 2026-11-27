@@ -109,20 +109,26 @@ export default function WorkoutScreen() {
   }, [cardioRunning]);
 
   useEffect(() => {
+    let syncing = false;
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && session) {
+      if (state === 'active' && session && !syncing) {
+        syncing = true;
         void (async () => {
-          const pending = await GymAndroidNative.consumePendingLogs();
-          for (const s of pending.sets) {
-            if (s.exerciseId && s.exerciseId !== 'freestyle') {
-              await logSet({
-                exerciseId: s.exerciseId,
-                weightKg: s.weightKg,
-                reps: s.reps,
-                setType: 'working',
-                effort: 'moderate',
-              });
+          try {
+            const pending = await GymAndroidNative.consumePendingLogs();
+            for (const s of pending.sets) {
+              if (s.exerciseId && s.exerciseId !== 'freestyle') {
+                await logSet({
+                  exerciseId: s.exerciseId,
+                  weightKg: s.weightKg,
+                  reps: s.reps,
+                  setType: 'working',
+                  effort: 'moderate',
+                });
+              }
             }
+          } finally {
+            syncing = false;
           }
         })();
       }
