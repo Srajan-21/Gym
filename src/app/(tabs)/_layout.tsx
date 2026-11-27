@@ -1,6 +1,7 @@
 import React from 'react';
 import { Tabs } from 'expo-router';
 import { BarChart3, Dumbbell, Home, Utensils } from 'lucide-react-native';
+import { ModeSwitcher } from '../../components/ModeSwitcher';
 import { Colors } from '../../theme/colors';
 
 export default function TabsLayout() {
@@ -23,6 +24,7 @@ export default function TabsLayout() {
           fontWeight: '700',
           letterSpacing: 0.3,
         },
+        headerRight: () => <ModeSwitcher activeMode="gym" />,
       }}
     >
       <Tabs.Screen
