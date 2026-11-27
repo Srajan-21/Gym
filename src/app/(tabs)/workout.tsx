@@ -243,14 +243,14 @@ export default function WorkoutScreen() {
     const reps = parseInt(repsInput, 10);
     const weight = parseFloat(weightInput) || 0;
 
-    if (action === 'next_exercise' && (!repsInput.trim() || Number.isNaN(reps) || reps <= 0)) {
+    if (action === 'next_exercise' && (!repsInput.trim() || Number.isNaN(reps) || reps < 0)) {
       await setExerciseStatus(currentEx.exercise_id, 'completed');
       advanceToNextExerciseOrFinish();
       return;
     }
 
-    if (Number.isNaN(reps) || reps <= 0) {
-      Alert.alert('Enter Reps', 'Fill in repetitions for this set.');
+    if (Number.isNaN(reps) || reps < 0) {
+      Alert.alert('Enter Reps', 'Fill in repetitions (0 if set was not done).');
       return;
     }
 
@@ -264,13 +264,14 @@ export default function WorkoutScreen() {
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setRepsInput('');
 
-    const newCount = currentExSets.length + 1;
+    const completedCount =
+      currentExSets.filter((s) => s.reps > 0).length + (reps > 0 ? 1 : 0);
     if (action === 'next_exercise') {
       await setExerciseStatus(currentEx.exercise_id, 'completed');
       advanceToNextExerciseOrFinish();
     } else if (action === 'next_set') {
       // Stay on current exercise for next set
-    } else if (!isAdHocCurrent && newCount >= plannedTargetSets) {
+    } else if (!isAdHocCurrent && completedCount >= plannedTargetSets) {
       await setExerciseStatus(currentEx.exercise_id, 'completed');
       advanceToNextExerciseOrFinish();
     }
@@ -548,8 +549,14 @@ export default function WorkoutScreen() {
             {currentExSets.map((s, idx) => (
               <View key={s.id} style={styles.lockedSetRow}>
                 <Text style={styles.lockedSetText}>Set {idx + 1}</Text>
-                <Text style={styles.lockedSetVal}>
-                  {formatSetDisplay(currentEx.exercise?.name, Number(s.weight_kg), s.reps)} ✓
+                <Text
+                  style={[
+                    styles.lockedSetVal,
+                    s.reps === 0 && { color: Colors.amber },
+                  ]}
+                >
+                  {formatSetDisplay(currentEx.exercise?.name, Number(s.weight_kg), s.reps)}
+                  {s.reps > 0 ? ' ✓' : ''}
                 </Text>
               </View>
             ))}

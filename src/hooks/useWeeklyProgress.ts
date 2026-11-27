@@ -262,10 +262,15 @@ export function useWeeklyProgress(
         >();
 
         for (const row of setRows ?? []) {
-          totalSets += 1;
+          const isCompletedSet = Number(row.reps) > 0;
+          if (isCompletedSet) {
+            totalSets += 1;
+          }
           const sess = sessionById.get(row.session_id);
           const logDate = sess?.log_date ?? weekStart;
-          setsCountByDate[logDate] = (setsCountByDate[logDate] ?? 0) + 1;
+          if (isCompletedSet) {
+            setsCountByDate[logDate] = (setsCountByDate[logDate] ?? 0) + 1;
+          }
 
           const ex = row.exercise as unknown as {
             id: string;
@@ -278,7 +283,9 @@ export function useWeeklyProgress(
             muscleMap.set(ex.primary_muscle, { sets: 0, exercises: new Map() });
           }
           const mEntry = muscleMap.get(ex.primary_muscle)!;
-          mEntry.sets += 1;
+          if (isCompletedSet) {
+            mEntry.sets += 1;
+          }
 
           if (!mEntry.exercises.has(ex.id)) {
             mEntry.exercises.set(ex.id, {
@@ -288,7 +295,9 @@ export function useWeeklyProgress(
             });
           }
           const exEntry = mEntry.exercises.get(ex.id)!;
-          exEntry.totalSets += 1;
+          if (isCompletedSet) {
+            exEntry.totalSets += 1;
+          }
           if (!exEntry.byDate.has(logDate)) {
             exEntry.byDate.set(logDate, []);
           }

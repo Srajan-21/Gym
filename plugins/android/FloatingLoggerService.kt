@@ -246,7 +246,7 @@ class FloatingLoggerService : Service() {
       minusLabel = "-1",
       plusLabel = "+1",
       onMinus = {
-        reps = maxOf(1, reps - 1)
+        reps = maxOf(0, reps - 1)
         renderState()
       },
       onPlus = {
