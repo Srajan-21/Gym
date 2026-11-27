@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
+import { addDays } from '../context/DateContext';
+import { getWeekKey } from './useDiet';
+import {
+  DailyDisciplineMap,
+  DISCIPLINE_ITEMS,
+  DisciplineKey,
+} from './useDailyDiscipline';
+import { getCachedJson, getTodayDateString } from '../lib/storage';
 import { supabase } from '../lib/supabase';
 import { MuscleGroup, ProgressPhoto } from '../types/database';
 
@@ -11,24 +19,73 @@ export interface WeeklyCheckinSummary {
   avgSleepHours: number | null;
   avgSteps: number;
   workoutsCompleted: number;
+  totalSets: number;
+}
+
+export interface MuscleExerciseDayLog {
+  date: string;
+  dayLabel: string;
+  sets: { weight_kg: number; reps: number }[];
+}
+
+export interface MuscleExerciseDetail {
+  exerciseId: string;
+  exerciseName: string;
+  totalSets: number;
+  byDay: MuscleExerciseDayLog[];
 }
 
 export interface MuscleVolumeItem {
   muscle: MuscleGroup;
   sets: number;
+  exercises: MuscleExerciseDetail[];
 }
 
-function dateDaysAgo(days: number): string {
-  const d = new Date();
-  d.setDate(d.getDate() - days);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
+export interface WeekDayExcelRow {
+  date: string;
+  dayShort: string;
+  dateLabel: string;
+  workoutName: string;
+  workoutStatus: 'completed' | 'in_progress' | 'none';
+  setsCount: number;
+  calories: number;
+  proteinG: number;
+  waterGlasses: number;
+  steps: number;
+  weightKg: number | null;
+  disciplineDone: number;
 }
 
-export function useWeeklyProgress() {
+export interface WeeklyGamification {
+  overallPct: number;
+  workoutPct: number;
+  caloriePct: number;
+  hydrationPct: number;
+  disciplinePct: number;
+  rank: 'S-TIER' | 'A-TIER' | 'B-TIER' | 'GRINDING';
+}
+
+function formatShortDateLabel(dateStr: string): { dayShort: string; dateLabel: string } {
+  const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
+  const dt = new Date(y, m - 1, d);
+  return {
+    dayShort: dt.toLocaleDateString('en-US', { weekday: 'short' }),
+    dateLabel: dt.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }),
+  };
+}
+
+export function useWeeklyProgress(
+  weekOffset = 0,
+  targetCalories = 1850,
+  targetWater = 10
+) {
   const { user } = useAuth();
+  const todayStr = getTodayDateString();
+  const currentMonday = getWeekKey(todayStr);
+  const weekStart = addDays(currentMonday, weekOffset * 7);
+  const weekEnd = addDays(weekStart, 6);
+  const prevWeekStart = addDays(weekStart, -7);
+
   const [summary, setSummary] = useState<WeeklyCheckinSummary>({
     avgWeightKg: null,
     weightDeltaKg: null,
@@ -37,8 +94,26 @@ export function useWeeklyProgress() {
     avgSleepHours: null,
     avgSteps: 0,
     workoutsCompleted: 0,
+    totalSets: 0,
   });
+  const [dayRows, setDayRows] = useState<WeekDayExcelRow[]>([]);
   const [muscleVolume, setMuscleVolume] = useState<MuscleVolumeItem[]>([]);
+  const [gamification, setGamification] = useState<WeeklyGamification>({
+    overallPct: 0,
+    workoutPct: 0,
+    caloriePct: 0,
+    hydrationPct: 0,
+    disciplinePct: 0,
+    rank: 'GRINDING',
+  });
+  const [disciplineCounts, setDisciplineCounts] = useState<Record<DisciplineKey, number>>({
+    no_porn: 0,
+    no_alcohol: 0,
+    no_junk: 0,
+    no_smoking: 0,
+    creatine: 0,
+    stretching: 0,
+  });
   const [photos, setPhotos] = useState<ProgressPhoto[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -48,48 +123,58 @@ export function useWeeklyProgress() {
       return;
     }
 
-    const weekStart = dateDaysAgo(6);
-    const prevWeekStart = dateDaysAgo(13);
-
+    setLoading(true);
     try {
+      const weekDates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
       const [
         { data: dailyRows },
         { data: foodRows },
         { data: sessionRows },
         { data: photoRows },
+        disciplineMaps,
       ] = await Promise.all([
         supabase
           .from('daily_logs')
           .select('*')
           .eq('user_id', user.id)
           .gte('log_date', prevWeekStart)
-          .order('log_date', { ascending: false }),
+          .lte('log_date', weekEnd)
+          .order('log_date', { ascending: true }),
         supabase
           .from('food_logs')
           .select('log_date, calories, protein_g')
           .eq('user_id', user.id)
-          .gte('log_date', weekStart),
+          .gte('log_date', weekStart)
+          .lte('log_date', weekEnd),
         supabase
           .from('workout_sessions')
-          .select('id, status, log_date')
+          .select('id, status, log_date, split_name')
           .eq('user_id', user.id)
-          .gte('log_date', weekStart),
+          .gte('log_date', weekStart)
+          .lte('log_date', weekEnd),
         supabase
           .from('progress_photos')
           .select('*')
           .eq('user_id', user.id)
           .order('log_date', { ascending: false })
+          .order('created_at', { ascending: false })
           .limit(30),
+        Promise.all(
+          weekDates.map((d) =>
+            getCachedJson<DailyDisciplineMap>(`gym_discipline_${user.id}_${d}_v1`)
+          )
+        ),
       ]);
 
-      // 1. Weight, Sleep & Steps (current 7d vs previous 7d)
       const thisWeekDaily = (dailyRows ?? []).filter((r) => r.log_date >= weekStart);
       const prevWeekDaily = (dailyRows ?? []).filter((r) => r.log_date < weekStart);
 
       const getAvgWeight = (rows: typeof thisWeekDaily) => {
         const weights = rows
-          .map((r) => (r.weight_pre_kg ? Number(r.weight_pre_kg) : null))
-          .filter((w): w is number => w !== null);
+          .map((r) => r.weight_post_kg ?? r.weight_pre_kg)
+          .filter((w): w is number => w !== null && w !== undefined)
+          .map(Number);
         if (weights.length === 0) return null;
         return Math.round((weights.reduce((a, b) => a + b, 0) / weights.length) * 100) / 100;
       };
@@ -117,15 +202,15 @@ export function useWeeklyProgress() {
             10
           : null;
 
-      const stepsTotals = thisWeekDaily.map(
-        (r) => (r.steps_treadmill ?? 0) + (r.steps_other ?? 0)
-      );
+      const stepsTotals = thisWeekDaily
+        .map((r) => (r.steps_treadmill ?? 0) + (r.steps_other ?? 0))
+        .filter((s) => s > 0);
       const avgSteps =
         stepsTotals.length > 0
           ? Math.round(stepsTotals.reduce((a, b) => a + b, 0) / stepsTotals.length)
           : 0;
 
-      // 2. Nutrition Averages (grouped by days logged)
+      // Food per day
       const foodByDay: Record<string, { cal: number; pro: number }> = {};
       for (const f of foodRows ?? []) {
         if (!foodByDay[f.log_date]) foodByDay[f.log_date] = { cal: 0, pro: 0 };
@@ -142,33 +227,201 @@ export function useWeeklyProgress() {
           ? Math.round(foodDays.reduce((a, b) => a + b.pro, 0) / foodDays.length)
           : 0;
 
-      // 3. Workouts & Weekly Muscle Volume Counter (exclude warmup sets)
+      // Sessions & sets + muscle drilldown
+      const sessionById = new Map((sessionRows ?? []).map((s) => [s.id, s]));
+      const sessionByDate = new Map((sessionRows ?? []).map((s) => [s.log_date, s]));
       const sessionIds = (sessionRows ?? []).map((s) => s.id);
       const workoutsCompleted = (sessionRows ?? []).filter(
         (s) => s.status === 'completed'
       ).length;
 
+      const setsCountByDate: Record<string, number> = {};
+      let totalSets = 0;
+
       if (sessionIds.length > 0) {
         const { data: setRows } = await supabase
           .from('workout_sets')
-          .select('set_type, exercise:exercises(primary_muscle)')
+          .select('session_id, exercise_id, set_number, weight_kg, reps, set_type, exercise:exercises(id, name, primary_muscle)')
           .in('session_id', sessionIds)
-          .neq('set_type', 'warmup');
+          .neq('set_type', 'warmup')
+          .order('set_number', { ascending: true });
 
-        const counts: Partial<Record<MuscleGroup, number>> = {};
-        for (const row of setRows ?? []) {
-          const ex = row.exercise as unknown as { primary_muscle: MuscleGroup } | null;
-          if (ex?.primary_muscle) {
-            counts[ex.primary_muscle] = (counts[ex.primary_muscle] ?? 0) + 1;
+        const muscleMap = new Map<
+          MuscleGroup,
+          {
+            sets: number;
+            exercises: Map<
+              string,
+              {
+                exerciseName: string;
+                totalSets: number;
+                byDate: Map<string, { weight_kg: number; reps: number }[]>;
+              }
+            >;
           }
+        >();
+
+        for (const row of setRows ?? []) {
+          totalSets += 1;
+          const sess = sessionById.get(row.session_id);
+          const logDate = sess?.log_date ?? weekStart;
+          setsCountByDate[logDate] = (setsCountByDate[logDate] ?? 0) + 1;
+
+          const ex = row.exercise as unknown as {
+            id: string;
+            name: string;
+            primary_muscle: MuscleGroup;
+          } | null;
+          if (!ex?.primary_muscle) continue;
+
+          if (!muscleMap.has(ex.primary_muscle)) {
+            muscleMap.set(ex.primary_muscle, { sets: 0, exercises: new Map() });
+          }
+          const mEntry = muscleMap.get(ex.primary_muscle)!;
+          mEntry.sets += 1;
+
+          if (!mEntry.exercises.has(ex.id)) {
+            mEntry.exercises.set(ex.id, {
+              exerciseName: ex.name,
+              totalSets: 0,
+              byDate: new Map(),
+            });
+          }
+          const exEntry = mEntry.exercises.get(ex.id)!;
+          exEntry.totalSets += 1;
+          if (!exEntry.byDate.has(logDate)) {
+            exEntry.byDate.set(logDate, []);
+          }
+          exEntry.byDate.get(logDate)!.push({
+            weight_kg: Number(row.weight_kg),
+            reps: row.reps,
+          });
         }
-        const sorted = Object.entries(counts)
-          .map(([muscle, sets]) => ({ muscle: muscle as MuscleGroup, sets: sets ?? 0 }))
+
+        const compiled: MuscleVolumeItem[] = Array.from(muscleMap.entries())
+          .map(([muscle, data]) => ({
+            muscle,
+            sets: data.sets,
+            exercises: Array.from(data.exercises.entries()).map(([exerciseId, exData]) => ({
+              exerciseId,
+              exerciseName: exData.exerciseName,
+              totalSets: exData.totalSets,
+              byDay: Array.from(exData.byDate.entries())
+                .sort((a, b) => a[0].localeCompare(b[0]))
+                .map(([date, sets]) => ({
+                  date,
+                  dayLabel: formatShortDateLabel(date).dateLabel,
+                  sets,
+                })),
+            })),
+          }))
           .sort((a, b) => b.sets - a.sets);
-        setMuscleVolume(sorted);
+
+        setMuscleVolume(compiled);
       } else {
         setMuscleVolume([]);
       }
+
+      // Discipline counts & Excel rows
+      const nextDiscCounts: Record<DisciplineKey, number> = {
+        no_porn: 0,
+        no_alcohol: 0,
+        no_junk: 0,
+        no_smoking: 0,
+        creatine: 0,
+        stretching: 0,
+      };
+      let totalChecksDone = 0;
+
+      const dailyByDate = new Map(thisWeekDaily.map((d) => [d.log_date, d]));
+      const rows: WeekDayExcelRow[] = weekDates.map((dateStr, idx) => {
+        const { dayShort, dateLabel } = formatShortDateLabel(dateStr);
+        const sess = sessionByDate.get(dateStr);
+        const daily = dailyByDate.get(dateStr);
+        const food = foodByDay[dateStr];
+        const disc = disciplineMaps[idx] ?? {};
+
+        let discDone = 0;
+        for (const item of DISCIPLINE_ITEMS) {
+          if (disc[item.key]) {
+            discDone += 1;
+            nextDiscCounts[item.key] += 1;
+            totalChecksDone += 1;
+          }
+        }
+
+        const isSunday = idx === 6;
+        return {
+          date: dateStr,
+          dayShort,
+          dateLabel,
+          workoutName: sess?.split_name ?? (isSunday ? 'Rest Day' : '—'),
+          workoutStatus:
+            sess?.status === 'completed'
+              ? 'completed'
+              : sess
+                ? 'in_progress'
+                : 'none',
+          setsCount: setsCountByDate[dateStr] ?? 0,
+          calories: food ? Math.round(food.cal) : 0,
+          proteinG: food ? Math.round(food.pro) : 0,
+          waterGlasses: daily?.water_glasses ?? 0,
+          steps: (daily?.steps_treadmill ?? 0) + (daily?.steps_other ?? 0),
+          weightKg:
+            daily?.weight_post_kg != null
+              ? Number(daily.weight_post_kg)
+              : daily?.weight_pre_kg != null
+                ? Number(daily.weight_pre_kg)
+                : null,
+          disciplineDone: discDone,
+        };
+      });
+
+      setDayRows(rows);
+      setDisciplineCounts(nextDiscCounts);
+
+      // Gamification percentages
+      const workoutPct = Math.min(100, Math.round((workoutsCompleted / 6) * 100));
+      const calHitDays = rows.filter(
+        (r) => r.calories > 0 && r.calories <= targetCalories + 150
+      ).length;
+      const caloriePct =
+        foodDays.length > 0 ? Math.min(100, Math.round((calHitDays / 6) * 100)) : 0;
+
+      const avgWater =
+        rows.reduce((s, r) => s + r.waterGlasses, 0) /
+        Math.max(1, rows.filter((r) => r.waterGlasses > 0).length);
+      const hydrationPct =
+        rows.some((r) => r.waterGlasses > 0)
+          ? Math.min(100, Math.round((avgWater / Math.max(1, targetWater)) * 100))
+          : 0;
+
+      const activeDaysSoFar = weekDates.filter((d) => d <= todayStr).length || 7;
+      const disciplinePct = Math.min(
+        100,
+        Math.round((totalChecksDone / (activeDaysSoFar * DISCIPLINE_ITEMS.length)) * 100)
+      );
+
+      const overallPct = Math.round(
+        (workoutPct + caloriePct + hydrationPct + disciplinePct) / 4
+      );
+      const rank: WeeklyGamification['rank'] =
+        overallPct >= 85
+          ? 'S-TIER'
+          : overallPct >= 70
+            ? 'A-TIER'
+            : overallPct >= 50
+              ? 'B-TIER'
+              : 'GRINDING';
+
+      setGamification({
+        overallPct,
+        workoutPct,
+        caloriePct,
+        hydrationPct,
+        disciplinePct,
+        rank,
+      });
 
       setSummary({
         avgWeightKg,
@@ -178,14 +431,16 @@ export function useWeeklyProgress() {
         avgSleepHours,
         avgSteps,
         workoutsCompleted,
+        totalSets,
       });
+
       setPhotos((photoRows ?? []) as ProgressPhoto[]);
     } catch {
-      // Ignore offline errors
+      // Keep existing state when offline
     } finally {
       setLoading(false);
     }
-  }, [user]);
+  }, [prevWeekStart, targetCalories, targetWater, todayStr, user, weekEnd, weekStart]);
 
   useEffect(() => {
     void (async () => {
@@ -195,8 +450,13 @@ export function useWeeklyProgress() {
   }, [loadProgress]);
 
   return {
+    weekStart,
+    weekEnd,
     summary,
+    dayRows,
     muscleVolume,
+    gamification,
+    disciplineCounts,
     photos,
     loading,
     refresh: loadProgress,

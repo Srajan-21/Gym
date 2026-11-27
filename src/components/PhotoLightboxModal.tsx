@@ -7,17 +7,22 @@ import { ProgressPhoto } from '../types/database';
 
 interface PhotoLightboxModalProps {
   photo: ProgressPhoto | null;
+  hidePose?: boolean;
   onClose: () => void;
 }
 
-export function PhotoLightboxModal({ photo, onClose }: PhotoLightboxModalProps) {
+export function PhotoLightboxModal({ photo, hidePose = false, onClose }: PhotoLightboxModalProps) {
   return (
     <Modal visible={Boolean(photo)} animationType="fade" transparent onRequestClose={onClose}>
       <View style={styles.backdrop}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <View style={styles.header}>
           <Text style={styles.meta}>
-            {photo ? `${photo.log_date} • ${photo.pose_tag.toUpperCase()}` : ''}
+            {photo
+              ? hidePose
+                ? photo.log_date
+                : `${photo.log_date} • ${photo.pose_tag.toUpperCase()}`
+              : ''}
           </Text>
           <Pressable style={styles.closeBtn} onPress={onClose}>
             <X size={22} color={Colors.text} />

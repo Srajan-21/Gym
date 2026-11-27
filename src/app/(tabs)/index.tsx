@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,10 +14,11 @@ import {
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import * as ImagePicker from 'expo-image-picker';
-import { useRouter } from 'expo-router';
+import { useFocusEffect, useRouter } from 'expo-router';
 import {
   Calendar,
   Camera,
+  Check,
   CheckCircle2,
   Droplets,
   Dumbbell,
@@ -41,6 +42,7 @@ import {
   useSelectedDate,
 } from '../../context/DateContext';
 import { useDailyHabits } from '../../hooks/useDailyHabits';
+import { DISCIPLINE_ITEMS, useDailyDiscipline } from '../../hooks/useDailyDiscipline';
 import { useDiet } from '../../hooks/useDiet';
 import { FULL_DAY_NAMES, useSplit } from '../../hooks/useSplit';
 import { useWorkoutSession } from '../../hooks/useWorkoutSession';
@@ -70,13 +72,21 @@ export default function TodayScreen() {
   const { getSplitForDate } = useSplit();
   const { data: todaySplit } = getSplitForDate(selectedDate);
 
-  const { dailyTotals, goals, activeTargetScope, foodLogs } = useDiet();
-  const { session, sessionExercises, sets } = useWorkoutSession(todaySplit);
+  const {
+    dailyTotals,
+    goals,
+    activeTargetScope,
+    foodLogs,
+    refresh: refreshDiet,
+  } = useDiet();
+  const { session, sessionExercises, sets, refresh: refreshWorkout } =
+    useWorkoutSession(todaySplit);
   const {
     dailyLog,
     todayPhotos,
     sleepDurationHours,
     uploadingPhoto,
+    refresh: refreshHabits,
     adjustWater,
     saveSteps,
     saveWeight,
@@ -84,6 +94,15 @@ export default function TodayScreen() {
     saveBulkDayHabits,
     addProgressPhoto,
   } = useDailyHabits();
+
+  useFocusEffect(
+    useCallback(() => {
+      void refreshDiet();
+      void refreshWorkout();
+      void refreshHabits();
+    }, [refreshDiet, refreshHabits, refreshWorkout])
+  );
+  const { checks: disciplineChecks, toggleCheck: toggleDiscipline } = useDailyDiscipline();
 
   const [backfillOpen, setBackfillOpen] = useState(false);
   const [enlargedPhoto, setEnlargedPhoto] = useState<ProgressPhoto | null>(null);
@@ -589,6 +608,41 @@ export default function TodayScreen() {
             </View>
           </View>
 
+          {/* Daily Discipline Summary */}
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>Daily Discipline</Text>
+              <Text style={[styles.badge, { color: Colors.success }]}>
+                {DISCIPLINE_ITEMS.filter((i) => disciplineChecks[i.key]).length} /{' '}
+                {DISCIPLINE_ITEMS.length}
+              </Text>
+            </View>
+            <View style={styles.disciplineGrid}>
+              {DISCIPLINE_ITEMS.map((item) => {
+                const checked = Boolean(disciplineChecks[item.key]);
+                return (
+                  <Pressable
+                    key={item.key}
+                    style={[styles.disciplineChip, checked && styles.disciplineChipActive]}
+                    onPress={() => void toggleDiscipline(item.key)}
+                  >
+                    <View style={[styles.smallCheck, checked && styles.smallCheckActive]}>
+                      {checked && <Check size={11} color={Colors.primaryText} />}
+                    </View>
+                    <Text
+                      style={[
+                        styles.disciplineLabel,
+                        checked && styles.disciplineLabelActive,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+
           {/* Progress Photos Summary */}
           <View style={styles.card}>
             <View style={styles.rowBetween}>
@@ -813,7 +867,18 @@ export default function TodayScreen() {
           {activeTargetScope.toUpperCase()} target • Protein: {dailyTotals.protein_g} /{' '}
           {goals.target_protein_g}g • Carbs: {dailyTotals.carbs_g}g • Fat: {dailyTotals.fat_g}g
         </Text>
-        {foodLogs.length === 0 && (
+        {foodLogs.length > 0 ? (
+          <View style={styles.mealListWrap}>
+            {foodLogs.map((log) => (
+              <View key={log.id} style={styles.mealSummaryRow}>
+                <Text style={styles.mealSummaryName} numberOfLines={1}>
+                  {log.meal_name}
+                </Text>
+                <Text style={styles.mealSummaryKcal}>{Math.round(log.calories)} kcal</Text>
+              </View>
+            ))}
+          </View>
+        ) : (
           <Text style={styles.notSetHint}>No meals logged for this day. Tap to add or set target.</Text>
         )}
       </Pressable>
@@ -983,6 +1048,38 @@ export default function TodayScreen() {
           <Pressable style={styles.saveSmallBtn} onPress={handleSaveWeight}>
             <Text style={styles.btnText}>Save</Text>
           </Pressable>
+        </View>
+      </View>
+
+      {/* Daily Discipline Checkboxes */}
+      <View style={styles.card}>
+        <View style={styles.rowBetween}>
+          <Text style={styles.cardTitle}>Daily Discipline</Text>
+          <Text style={[styles.badge, { color: Colors.success }]}>
+            {DISCIPLINE_ITEMS.filter((i) => disciplineChecks[i.key]).length} /{' '}
+            {DISCIPLINE_ITEMS.length}
+          </Text>
+        </View>
+        <View style={styles.disciplineGrid}>
+          {DISCIPLINE_ITEMS.map((item) => {
+            const checked = Boolean(disciplineChecks[item.key]);
+            return (
+              <Pressable
+                key={item.key}
+                style={[styles.disciplineChip, checked && styles.disciplineChipActive]}
+                onPress={() => void toggleDiscipline(item.key)}
+              >
+                <View style={[styles.smallCheck, checked && styles.smallCheckActive]}>
+                  {checked && <Check size={11} color={Colors.primaryText} />}
+                </View>
+                <Text
+                  style={[styles.disciplineLabel, checked && styles.disciplineLabelActive]}
+                >
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
       </View>
 
@@ -1476,4 +1573,48 @@ const styles = StyleSheet.create({
   futureEmoji: { fontSize: 36 },
   futureTitle: { color: Colors.text, fontSize: 20, fontWeight: '800', textAlign: 'center' },
   futureSub: { color: Colors.textSecondary, fontSize: 13, textAlign: 'center', lineHeight: 19 },
+  disciplineGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  disciplineChip: {
+    width: '48.5%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  disciplineChipActive: {
+    backgroundColor: Colors.successSoft,
+    borderColor: Colors.success,
+  },
+  smallCheck: {
+    width: 18,
+    height: 18,
+    borderRadius: 5,
+    borderWidth: 1.5,
+    borderColor: Colors.textMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  smallCheckActive: {
+    backgroundColor: Colors.success,
+    borderColor: Colors.success,
+  },
+  disciplineLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+    flex: 1,
+  },
+  disciplineLabelActive: {
+    color: Colors.text,
+    fontWeight: '700',
+  },
 });

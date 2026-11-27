@@ -236,7 +236,7 @@ export function SundayWeeklyReport({
             <TrendingUp size={16} color={Colors.primary} />
           </View>
           <View>
-            <Text style={styles.kicker}>SUNDAY WEEKLY REPORT</Text>
+            <Text style={styles.kicker}>WEEKLY PROGRESS REPORT</Text>
             <Text style={styles.cardTitle}>
               {weekStart} → {weekEnd}
             </Text>

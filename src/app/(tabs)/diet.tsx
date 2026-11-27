@@ -9,7 +9,8 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
-import { Bookmark, Calculator, Flame, Settings, Trash2, X } from 'lucide-react-native';
+import { Bookmark, Calculator, Clock, Flame, Settings, Sparkles, Trash2, X } from 'lucide-react-native';
+import { AiMealModal } from '../../components/AiMealModal';
 import { DateStrip } from '../../components/DateStrip';
 import { MessLoggerModal } from '../../components/MessLoggerModal';
 import { RecipeBuilderModal } from '../../components/RecipeBuilderModal';
@@ -17,16 +18,14 @@ import { addDays, formatReadableDate, useSelectedDate } from '../../context/Date
 import { TargetScope, useDiet } from '../../hooks/useDiet';
 import { getTodayDateString } from '../../lib/storage';
 import { Colors } from '../../theme/colors';
-import { GoalMode, MealSlot } from '../../types/database';
+import { GoalMode } from '../../types/database';
 
-const MEAL_SLOTS: { key: MealSlot; label: string }[] = [
-  { key: 'breakfast', label: 'Breakfast' },
-  { key: 'pre_workout', label: 'Pre-Workout' },
-  { key: 'post_workout', label: 'Post-Workout' },
-  { key: 'lunch', label: 'Lunch' },
-  { key: 'snack', label: 'Snacks' },
-  { key: 'dinner', label: 'Dinner' },
-];
+function getCurrentTimeLabel(): string {
+  return new Date().toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
 
 const GOAL_MODES: GoalMode[] = ['cut', 'recomp', 'maintain', 'bulk'];
 const TARGET_SCOPES: { key: TargetScope; label: string }[] = [
@@ -58,9 +57,16 @@ export default function DietScreen() {
     clearScopedTarget,
   } = useDiet();
 
-  const [activeSlot, setActiveSlot] = useState<MealSlot>('lunch');
+  const [mealTime, setMealTime] = useState(getCurrentTimeLabel);
   const [recipeOpen, setRecipeOpen] = useState(false);
+
+  const formatMealWithTime = (name: string) => {
+    const t = mealTime.trim();
+    if (!t || name.includes(`(${t})`)) return name;
+    return `${name} (${t})`;
+  };
   const [messOpen, setMessOpen] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
   const [goalsOpen, setGoalsOpen] = useState(false);
 
   const [targetScope, setTargetScope] = useState<TargetScope>('day');
@@ -217,23 +223,28 @@ export default function DietScreen() {
         </View>
       </View>
 
-      {/* Meal Slot Selector */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
-        {MEAL_SLOTS.map((slot) => {
-          const active = activeSlot === slot.key;
-          return (
-            <Pressable
-              key={slot.key}
-              style={[styles.slotPill, active && styles.slotPillActive]}
-              onPress={() => setActiveSlot(slot.key)}
-            >
-              <Text style={[styles.slotText, active && styles.slotTextActive]}>{slot.label}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+      {/* Meal Time Input */}
+      <View style={styles.timeCard}>
+        <View style={styles.rowGapSmall}>
+          <Clock size={16} color={Colors.primary} />
+          <Text style={styles.timeLabel}>Meal Time</Text>
+        </View>
+        <TextInput
+          style={styles.timeInput}
+          value={mealTime}
+          onChangeText={setMealTime}
+          placeholder="e.g. 2:00 PM"
+          placeholderTextColor={Colors.textMuted}
+        />
+        <Pressable
+          style={styles.nowBtn}
+          onPress={() => setMealTime(getCurrentTimeLabel())}
+        >
+          <Text style={styles.nowBtnText}>Now</Text>
+        </Pressable>
+      </View>
 
-      {/* Action Buttons: Ingredient/Oil Calc & Mess Oil Slider */}
+      {/* Action Buttons: Ingredient/Oil Calc, Mess Oil Slider & AI Meal */}
       <View style={styles.rowGap}>
         <Pressable style={[styles.actionBtn, { backgroundColor: Colors.primary }]} onPress={() => setRecipeOpen(true)}>
           <Calculator size={17} color={Colors.primaryText} />
@@ -244,6 +255,14 @@ export default function DietScreen() {
           <Text style={[styles.actionText, { color: Colors.amber }]}>Mess / Oil Slider</Text>
         </Pressable>
       </View>
+
+      <Pressable
+        style={[styles.aiBtn]}
+        onPress={() => setAiOpen(true)}
+      >
+        <Sparkles size={17} color={Colors.gold} />
+        <Text style={styles.aiBtnText}>AI Meal / Recipe Extractor (Type anything)</Text>
+      </Pressable>
 
       {/* 1-Tap Saved Indian Meals */}
       {savedMeals.length > 0 && (
@@ -258,8 +277,8 @@ export default function DietScreen() {
                 <Pressable
                   onPress={async () => {
                     await logFoodEntry({
-                      mealSlot: activeSlot,
-                      mealName: meal.name,
+                      mealSlot: 'snack',
+                      mealName: formatMealWithTime(meal.name),
                       macros: {
                         calories: Number(meal.total_calories),
                         protein_g: Number(meal.total_protein),
@@ -297,8 +316,8 @@ export default function DietScreen() {
               <View style={{ flex: 1 }}>
                 <Text style={styles.logName}>{log.meal_name}</Text>
                 <Text style={styles.logMeta}>
-                  {log.meal_slot.replace('_', ' ')} • {Math.round(log.calories)} kcal • P{' '}
-                  {log.protein_g}g • C {log.carbs_g}g • F {log.fat_g}g
+                  {Math.round(log.calories)} kcal • P {log.protein_g}g • C {log.carbs_g}g • F{' '}
+                  {log.fat_g}g
                   {log.oil_ghee_level !== 'none' ? ` • Oil: ${log.oil_ghee_level}` : ''}
                 </Text>
               </View>
@@ -312,16 +331,16 @@ export default function DietScreen() {
 
       <RecipeBuilderModal
         visible={recipeOpen}
-        mealSlot={activeSlot}
+        mealSlot="snack"
         ingredients={ingredients}
         onClose={() => setRecipeOpen(false)}
         onLogMeal={async (mealName, macros) => {
-          await logFoodEntry({ mealSlot: activeSlot, mealName, macros });
+          await logFoodEntry({ mealSlot: 'snack', mealName: formatMealWithTime(mealName), macros });
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }}
         onSaveAndLogMeal={async (mealName, items, macros) => {
           await saveCustomMeal(mealName, items);
-          await logFoodEntry({ mealSlot: activeSlot, mealName, macros });
+          await logFoodEntry({ mealSlot: 'snack', mealName: formatMealWithTime(mealName), macros });
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }}
         onCreateIngredient={createCustomIngredient}
@@ -329,11 +348,26 @@ export default function DietScreen() {
 
       <MessLoggerModal
         visible={messOpen}
-        mealSlot={activeSlot}
+        mealSlot="snack"
         ingredients={ingredients}
         onClose={() => setMessOpen(false)}
         onLogMessMeal={async (mealName, oilGheeLevel, macros) => {
-          await logFoodEntry({ mealSlot: activeSlot, mealName, oilGheeLevel, macros });
+          await logFoodEntry({
+            mealSlot: 'snack',
+            mealName: formatMealWithTime(mealName),
+            oilGheeLevel,
+            macros,
+          });
+          await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        }}
+      />
+
+      <AiMealModal
+        visible={aiOpen}
+        mealTime={mealTime}
+        onClose={() => setAiOpen(false)}
+        onLogMeal={async (mealName, macros) => {
+          await logFoodEntry({ mealSlot: 'snack', mealName: formatMealWithTime(mealName), macros });
           await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }}
       />
@@ -556,4 +590,49 @@ const styles = StyleSheet.create({
     fontSize: 12,
     lineHeight: 17,
   },
+  aiBtn: {
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+    borderRadius: 12,
+    paddingVertical: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  aiBtnText: { color: Colors.gold, fontSize: 13, fontWeight: '700' },
+  timeCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.surface,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  timeLabel: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  timeInput: {
+    flex: 1,
+    backgroundColor: Colors.bg,
+    color: Colors.text,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  nowBtn: {
+    backgroundColor: Colors.primarySoft,
+    borderWidth: 1,
+    borderColor: Colors.primary,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+  },
+  nowBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
 });
