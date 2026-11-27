@@ -328,13 +328,13 @@ export default function WorkoutScreen() {
     }
 
     const result = useCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.75 })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.75 });
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: true });
 
     if (result.canceled || !result.assets[0]) return;
     try {
       const tag: PoseTag = 'pump';
-      await addProgressPhoto(result.assets[0].uri, tag);
+      await addProgressPhoto(result.assets[0].uri, tag, result.assets[0].base64);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Uploaded', 'Progress photo saved for today.');
     } catch (err) {

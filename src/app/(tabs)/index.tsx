@@ -275,13 +275,13 @@ export default function TodayScreen() {
     }
 
     const result = useCamera
-      ? await ImagePicker.launchCameraAsync({ quality: 0.75 })
-      : await ImagePicker.launchImageLibraryAsync({ quality: 0.75 });
+      ? await ImagePicker.launchCameraAsync({ quality: 0.7, base64: true })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.7, base64: true });
 
     if (result.canceled || !result.assets[0]) return;
 
     try {
-      await addProgressPhoto(result.assets[0].uri, poseTag);
+      await addProgressPhoto(result.assets[0].uri, poseTag, result.assets[0].base64);
       await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } catch (err) {
       Alert.alert('Upload Failed', err instanceof Error ? err.message : 'Cloudinary error.');

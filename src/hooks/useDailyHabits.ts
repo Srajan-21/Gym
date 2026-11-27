@@ -171,11 +171,15 @@ export function useDailyHabits() {
     await upsertFields(fields);
   };
 
-  const addProgressPhoto = async (localUri: string, poseTag: PoseTag) => {
+  const addProgressPhoto = async (
+    localUri: string,
+    poseTag: PoseTag,
+    base64?: string | null
+  ) => {
     if (!user) return;
     setUploadingPhoto(true);
     try {
-      const uploaded = await uploadProgressPhoto(localUri, today);
+      const uploaded = await uploadProgressPhoto(localUri, today, base64);
       const { data, error } = await supabase
         .from('progress_photos')
         .insert({
