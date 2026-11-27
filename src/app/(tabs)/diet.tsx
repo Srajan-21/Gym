@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Modal,
   Pressable,
@@ -35,6 +35,14 @@ const TARGET_SCOPES: { key: TargetScope; label: string }[] = [
   { key: 'default', label: 'Default' },
 ];
 
+type MacroFocus = 'calories' | 'protein' | 'carbs' | 'fat';
+const MACRO_FOCUS_OPTIONS: { key: MacroFocus; label: string; color: string }[] = [
+  { key: 'calories', label: 'Calories', color: Colors.primary },
+  { key: 'protein', label: 'Protein', color: Colors.success },
+  { key: 'carbs', label: 'Carbs', color: Colors.amber },
+  { key: 'fat', label: 'Fat', color: Colors.purple },
+];
+
 export default function DietScreen() {
   const { selectedDate } = useSelectedDate();
   const {
@@ -58,6 +66,7 @@ export default function DietScreen() {
   } = useDiet();
 
   const [mealTime, setMealTime] = useState(getCurrentTimeLabel);
+  const [macroFocus, setMacroFocus] = useState<MacroFocus>('calories');
   const [recipeOpen, setRecipeOpen] = useState(false);
 
   const formatMealWithTime = (name: string) => {
@@ -111,6 +120,28 @@ export default function DietScreen() {
     );
     setGoalsOpen(false);
   };
+
+  const sortedByMacroCost = useMemo(() => {
+    const valOf = (log: (typeof foodLogs)[number]) =>
+      macroFocus === 'calories'
+        ? log.calories
+        : macroFocus === 'protein'
+          ? log.protein_g
+          : macroFocus === 'carbs'
+            ? log.carbs_g
+            : log.fat_g;
+    return [...foodLogs].sort((a, b) => valOf(b) - valOf(a));
+  }, [foodLogs, macroFocus]);
+
+  const activeMacroMeta = MACRO_FOCUS_OPTIONS.find((m) => m.key === macroFocus)!;
+  const activeDailyTotal =
+    macroFocus === 'calories'
+      ? dailyTotals.calories
+      : macroFocus === 'protein'
+        ? dailyTotals.protein_g
+        : macroFocus === 'carbs'
+          ? dailyTotals.carbs_g
+          : dailyTotals.fat_g;
 
   const scopeHint =
     targetScope === 'day'
@@ -300,6 +331,79 @@ export default function DietScreen() {
               </View>
             ))}
           </ScrollView>
+        </View>
+      )}
+
+      {/* Macro Cost by Food Item */}
+      {foodLogs.length > 0 && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Macro Cost by Food Item</Text>
+          <View style={styles.macroFilterRow}>
+            {MACRO_FOCUS_OPTIONS.map((opt) => {
+              const active = macroFocus === opt.key;
+              return (
+                <Pressable
+                  key={opt.key}
+                  style={[
+                    styles.macroFilterPill,
+                    active && { backgroundColor: opt.color, borderColor: opt.color },
+                  ]}
+                  onPress={() => setMacroFocus(opt.key)}
+                >
+                  <Text
+                    style={[
+                      styles.macroFilterText,
+                      active && { color: Colors.primaryText },
+                    ]}
+                  >
+                    {opt.label}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {sortedByMacroCost.map((log) => {
+            const val =
+              macroFocus === 'calories'
+                ? Math.round(log.calories)
+                : macroFocus === 'protein'
+                  ? log.protein_g
+                  : macroFocus === 'carbs'
+                    ? log.carbs_g
+                    : log.fat_g;
+            const sharePct =
+              activeDailyTotal > 0 ? Math.round((val / activeDailyTotal) * 100) : 0;
+            const unitLabel = macroFocus === 'calories' ? 'kcal' : 'g';
+
+            return (
+              <View key={`cost_${log.id}`} style={styles.costRow}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.costName} numberOfLines={1}>
+                    {log.meal_name}
+                  </Text>
+                  <Text style={[styles.costVal, { color: activeMacroMeta.color }]}>
+                    {val} {unitLabel} ({sharePct}%)
+                  </Text>
+                </View>
+                <View style={styles.barBg}>
+                  <View
+                    style={[
+                      styles.barFill,
+                      {
+                        width: `${Math.min(100, sharePct)}%`,
+                        backgroundColor: activeMacroMeta.color,
+                      },
+                    ]}
+                  />
+                </View>
+                <Text style={styles.costSub}>
+                  {Math.round(log.calories)} kcal • P {log.protein_g}g • C {log.carbs_g}g • F{' '}
+                  {log.fat_g}g
+                </Text>
+              </View>
+            );
+          })}
         </View>
       )}
 
@@ -635,4 +739,27 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   nowBtnText: { color: Colors.primary, fontSize: 12, fontWeight: '700' },
+  macroFilterRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  macroFilterPill: {
+    flex: 1,
+    paddingVertical: 7,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  macroFilterText: { color: Colors.textSecondary, fontSize: 11, fontWeight: '700' },
+  costRow: {
+    gap: 5,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: Colors.borderSubtle,
+  },
+  costName: { color: Colors.text, fontSize: 13, fontWeight: '700', flex: 1, marginRight: 8 },
+  costVal: { fontSize: 12, fontWeight: '800', fontVariant: ['tabular-nums'] },
+  costSub: { color: Colors.textMuted, fontSize: 11 },
 });
