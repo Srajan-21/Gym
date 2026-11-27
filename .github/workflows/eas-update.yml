@@ -31,4 +31,4 @@ jobs:
           EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME: ${{ secrets.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME }}
           EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET: ${{ secrets.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET }}
           EXPO_PUBLIC_GEMINI_API_KEY: ${{ secrets.EXPO_PUBLIC_GEMINI_API_KEY }}
-        run: npx --yes eas-cli@latest update --channel preview --environment preview --auto --non-interactive
+        run: npx --yes eas-cli@latest update --channel preview --auto --non-interactive

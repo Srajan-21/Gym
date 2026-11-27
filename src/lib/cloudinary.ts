@@ -3,8 +3,8 @@ export interface CloudinaryUploadResult {
   public_id: string;
 }
 
-const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME ?? '';
-const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET ?? '';
+const cloudName = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'kcj86z0m';
+const uploadPreset = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'Progress';
 
 export const isCloudinaryConfigured =
   Boolean(cloudName) &&
