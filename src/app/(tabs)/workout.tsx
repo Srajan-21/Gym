@@ -21,6 +21,8 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
   Pause,
   Play,
   Plus,
@@ -590,9 +592,34 @@ export default function WorkoutScreen() {
           )}
 
           <View style={styles.card}>
-            <Text style={styles.stepKicker}>
-              EXERCISE {currentExIdx + 1} OF {sessionExercises.length}
-            </Text>
+            <View style={styles.rowBetween}>
+              <Text style={styles.stepKicker}>
+                EXERCISE {currentExIdx + 1} OF {sessionExercises.length}
+              </Text>
+              <View style={styles.rowGapSmall}>
+                <Pressable
+                  style={[styles.exNavBtn, currentExIdx === 0 && { opacity: 0.35 }]}
+                  disabled={currentExIdx === 0}
+                  onPress={() => {
+                    setRepsInput('');
+                    setWeightInput('');
+                    setCurrentExIdx((i) => Math.max(0, i - 1));
+                  }}
+                >
+                  <ChevronLeft size={18} color={Colors.text} />
+                </Pressable>
+                <Pressable
+                  style={styles.exNavBtn}
+                  onPress={() => {
+                    setRepsInput('');
+                    setWeightInput('');
+                    advanceToNextExerciseOrFinish();
+                  }}
+                >
+                  <ChevronRight size={18} color={Colors.primary} />
+                </Pressable>
+              </View>
+            </View>
             <Text style={styles.exerciseTitle}>{currentEx.exercise?.name ?? 'Exercise'}</Text>
 
             {/* Fixed Completed Sets */}
@@ -1020,6 +1047,16 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   reasonChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
+  exNavBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
