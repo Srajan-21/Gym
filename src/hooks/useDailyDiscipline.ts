@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { addDays, useSelectedDate } from '../context/DateContext';
 import { getCachedJson, setCachedJson } from '../lib/storage';
+import { supabase } from '../lib/supabase';
 
 export type DisciplineKey =
   | 'no_porn'
@@ -36,11 +37,28 @@ export function useDailyDiscipline() {
       if (!cancelled) {
         setChecks(cached ?? {});
       }
+
+      try {
+        const { data } = await supabase
+          .from('daily_logs')
+          .select('discipline')
+          .eq('user_id', user.id)
+          .eq('log_date', selectedDate)
+          .maybeSingle();
+
+        if (!cancelled && data?.discipline && typeof data.discipline === 'object') {
+          const remote = data.discipline as DailyDisciplineMap;
+          setChecks(remote);
+          await setCachedJson(cacheKey, remote);
+        }
+      } catch {
+        // Fallback to AsyncStorage cache when offline
+      }
     })();
     return () => {
       cancelled = true;
     };
-  }, [cacheKey]);
+  }, [cacheKey, selectedDate, user.id]);
 
   const toggleCheck = useCallback(
     async (key: DisciplineKey) => {
@@ -50,8 +68,17 @@ export function useDailyDiscipline() {
       };
       setChecks(next);
       await setCachedJson(cacheKey, next);
+      await supabase.from('daily_logs').upsert(
+        {
+          user_id: user.id,
+          log_date: selectedDate,
+          discipline: next,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,log_date' }
+      );
     },
-    [cacheKey, checks]
+    [cacheKey, checks, selectedDate, user.id]
   );
 
   return { checks, toggleCheck };
@@ -69,6 +96,28 @@ export async function getWeeklyDisciplineCounts(
     creatine: 0,
     stretching: 0,
   };
+
+  const startDate = addDays(endDate, -6);
+  try {
+    const { data } = await supabase
+      .from('daily_logs')
+      .select('log_date, discipline')
+      .eq('user_id', userId)
+      .gte('log_date', startDate)
+      .lte('log_date', endDate);
+
+    if (data) {
+      for (const row of data) {
+        const map = (row.discipline ?? {}) as DailyDisciplineMap;
+        for (const item of DISCIPLINE_ITEMS) {
+          if (map[item.key]) counts[item.key] += 1;
+        }
+      }
+      return counts;
+    }
+  } catch {
+    // Fallback to AsyncStorage cache if offline
+  }
 
   const days = Array.from({ length: 7 }, (_, i) => addDays(endDate, -i));
   const results = await Promise.all(
