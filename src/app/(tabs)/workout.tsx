@@ -33,7 +33,7 @@ import {
   getDayOfWeekFromDate,
   useSelectedDate,
 } from '../../context/DateContext';
-import { getTodayDateString } from '../../lib/storage';
+import { getCachedJson, getTodayDateString, setCachedJson } from '../../lib/storage';
 import { useDailyHabits } from '../../hooks/useDailyHabits';
 import { FULL_DAY_NAMES, useSplit } from '../../hooks/useSplit';
 import { useWorkoutSession } from '../../hooks/useWorkoutSession';
@@ -96,6 +96,20 @@ export default function WorkoutScreen() {
   const [postNewExName, setPostNewExName] = useState('');
   const [warmupExtraName, setWarmupExtraName] = useState('');
 
+  // Zero-rep ("Not done") reason modal state
+  const [setReasons, setSetReasons] = useState<Record<string, string>>({});
+  const [pendingZeroSet, setPendingZeroSet] = useState<{
+    action: 'auto' | 'next_set' | 'next_exercise';
+    weight: number;
+  } | null>(null);
+  const [zeroReasonInput, setZeroReasonInput] = useState('');
+
+  useEffect(() => {
+    void getCachedJson<Record<string, string>>('gym_zero_set_reasons_v1').then((saved) => {
+      if (saved) setSetReasons(saved);
+    });
+  }, []);
+
   // Cardio timer state
   const [cardioName, setCardioName] = useState('Walking');
   const [cardioSeconds, setCardioSeconds] = useState(0);
@@ -148,7 +162,7 @@ export default function WorkoutScreen() {
   const plannedTargetSets = useMemo(() => {
     if (!currentEx || !todaySplit) return 3;
     const match = todaySplit.exercises.find((e) => e.exercise_id === currentEx.exercise_id);
-    return Math.min(3, Math.max(1, match?.target_sets ?? 3));
+    return Math.max(1, match?.target_sets ?? 3);
   }, [currentEx, todaySplit]);
 
   const isAdHocCurrent = currentEx ? Boolean(adHocMap[currentEx.exercise_id]) : false;
@@ -254,6 +268,12 @@ export default function WorkoutScreen() {
       return;
     }
 
+    if (reps === 0) {
+      setZeroReasonInput('');
+      setPendingZeroSet({ action, weight });
+      return;
+    }
+
     await logSet({
       exerciseId: currentEx.exercise_id,
       weightKg: weight,
@@ -272,6 +292,36 @@ export default function WorkoutScreen() {
     } else if (action === 'next_set') {
       // Stay on current exercise for next set
     } else if (!isAdHocCurrent && completedCount >= plannedTargetSets) {
+      await setExerciseStatus(currentEx.exercise_id, 'completed');
+      advanceToNextExerciseOrFinish();
+    }
+  };
+
+  const handleConfirmZeroSet = async () => {
+    if (!currentEx || !pendingZeroSet) return;
+    const reason = zeroReasonInput.trim();
+    if (!reason) {
+      Alert.alert('Reason Required', 'Select or type why this set was not done.');
+      return;
+    }
+    const inserted = await logSet({
+      exerciseId: currentEx.exercise_id,
+      weightKg: pendingZeroSet.weight,
+      reps: 0,
+      setType: 'working',
+      effort: 'moderate',
+    });
+    if (inserted?.id) {
+      const next = { ...setReasons, [inserted.id]: reason };
+      setSetReasons(next);
+      void setCachedJson('gym_zero_set_reasons_v1', next);
+    }
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRepsInput('');
+    const action = pendingZeroSet.action;
+    setPendingZeroSet(null);
+    setZeroReasonInput('');
+    if (action === 'next_exercise') {
       await setExerciseStatus(currentEx.exercise_id, 'completed');
       advanceToNextExerciseOrFinish();
     }
@@ -430,7 +480,7 @@ export default function WorkoutScreen() {
             <View style={{ gap: 6 }}>
               {todaySplit?.exercises.map((item, idx) => (
                 <Text key={item.id} style={styles.listItem}>
-                  {idx + 1}. {item.exercise?.name ?? 'Exercise'} • {Math.min(3, item.target_sets)} sets
+                  {idx + 1}. {item.exercise?.name ?? 'Exercise'} • {item.target_sets} sets
                 </Text>
               ))}
             </View>
@@ -556,6 +606,7 @@ export default function WorkoutScreen() {
                   ]}
                 >
                   {formatSetDisplay(currentEx.exercise?.name, Number(s.weight_kg), s.reps)}
+                  {s.reps === 0 && setReasons[s.id] ? ` — ${setReasons[s.id]}` : ''}
                   {s.reps > 0 ? ' ✓' : ''}
                 </Text>
               </View>
@@ -884,6 +935,60 @@ export default function WorkoutScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* Zero-Rep Reason Modal */}
+      <Modal visible={Boolean(pendingZeroSet)} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.cardTitle}>Why was this set not done?</Text>
+              <Pressable onPress={() => setPendingZeroSet(null)}>
+                <X size={20} color={Colors.textSecondary} />
+              </Pressable>
+            </View>
+            <Text style={styles.muted}>
+              0 reps recorded — tap a reason or type your own:
+            </Text>
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+              {['Cramp', 'Catch / Pull', 'Pain / Discomfort', 'Fatigue', 'Equipment Busy'].map(
+                (r) => {
+                  const active = zeroReasonInput === r;
+                  return (
+                    <Pressable
+                      key={r}
+                      style={[
+                        styles.reasonChip,
+                        active && { backgroundColor: Colors.primary, borderColor: Colors.primary },
+                      ]}
+                      onPress={() => setZeroReasonInput(r)}
+                    >
+                      <Text
+                        style={[
+                          styles.reasonChipText,
+                          active && { color: Colors.primaryText },
+                        ]}
+                      >
+                        {r}
+                      </Text>
+                    </Pressable>
+                  );
+                }
+              )}
+            </View>
+            <TextInput
+              style={styles.input}
+              placeholder="Other reason (e.g. shoulder catch)..."
+              placeholderTextColor={Colors.textMuted}
+              value={zeroReasonInput}
+              onChangeText={setZeroReasonInput}
+            />
+            <Pressable style={styles.primaryBtn} onPress={() => void handleConfirmZeroSet()}>
+              <Check size={16} color={Colors.primaryText} />
+              <Text style={styles.primaryBtnText}>Save Reason &amp; Log</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -906,6 +1011,15 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
   },
   overlayBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+  reasonChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 999,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  reasonChipText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '700' },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 16,

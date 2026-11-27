@@ -423,6 +423,7 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
     if (currentEx && currentEx.status === 'pending') {
       await setExerciseStatus(params.exerciseId, 'in_progress');
     }
+    return inserted;
   };
 
   const deleteSet = async (setId: string) => {
