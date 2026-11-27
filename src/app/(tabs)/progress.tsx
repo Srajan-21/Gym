@@ -9,14 +9,17 @@ import {
   View,
 } from 'react-native';
 import { BarChart3, CalendarCheck, Camera } from 'lucide-react-native';
+import { PhotoLightboxModal } from '../../components/PhotoLightboxModal';
 import { useWeeklyProgress } from '../../hooks/useWeeklyProgress';
 import { getOptimizedPhotoUrl } from '../../lib/cloudinary';
 import { Colors } from '../../theme/colors';
+import { ProgressPhoto } from '../../types/database';
 
 export default function ProgressScreen() {
   const { summary, muscleVolume, photos, loading, refresh } = useWeeklyProgress();
   const [compareLeftIdx, setCompareLeftIdx] = useState(0);
   const [compareRightIdx, setCompareRightIdx] = useState(1);
+  const [enlargedPhoto, setEnlargedPhoto] = useState<ProgressPhoto | null>(null);
 
   const maxMuscleSets = Math.max(1, ...muscleVolume.map((m) => m.sets));
 
@@ -114,12 +117,16 @@ export default function ProgressScreen() {
                   <Text style={styles.compareLabel}>
                     {photos[compareLeftIdx]?.log_date} ({photos[compareLeftIdx]?.pose_tag})
                   </Text>
-                  <Image
-                    source={{
-                      uri: getOptimizedPhotoUrl(photos[compareLeftIdx]?.cloudinary_url ?? '', 500),
-                    }}
-                    style={styles.compareImg}
-                  />
+                  <Pressable
+                    onPress={() => photos[compareLeftIdx] && setEnlargedPhoto(photos[compareLeftIdx])}
+                  >
+                    <Image
+                      source={{
+                        uri: getOptimizedPhotoUrl(photos[compareLeftIdx]?.cloudinary_url ?? '', 500),
+                      }}
+                      style={styles.compareImg}
+                    />
+                  </Pressable>
                   <Pressable
                     style={styles.cycleBtn}
                     onPress={() => setCompareLeftIdx((i) => (i + 1) % photos.length)}
@@ -132,12 +139,16 @@ export default function ProgressScreen() {
                   <Text style={styles.compareLabel}>
                     {photos[compareRightIdx]?.log_date} ({photos[compareRightIdx]?.pose_tag})
                   </Text>
-                  <Image
-                    source={{
-                      uri: getOptimizedPhotoUrl(photos[compareRightIdx]?.cloudinary_url ?? '', 500),
-                    }}
-                    style={styles.compareImg}
-                  />
+                  <Pressable
+                    onPress={() => photos[compareRightIdx] && setEnlargedPhoto(photos[compareRightIdx])}
+                  >
+                    <Image
+                      source={{
+                        uri: getOptimizedPhotoUrl(photos[compareRightIdx]?.cloudinary_url ?? '', 500),
+                      }}
+                      style={styles.compareImg}
+                    />
+                  </Pressable>
                   <Pressable
                     style={styles.cycleBtn}
                     onPress={() => setCompareRightIdx((i) => (i + 1) % photos.length)}
@@ -150,7 +161,7 @@ export default function ProgressScreen() {
 
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 10 }}>
               {photos.map((p) => (
-                <View key={p.id} style={styles.timelineItem}>
+                <Pressable key={p.id} style={styles.timelineItem} onPress={() => setEnlargedPhoto(p)}>
                   <Image
                     source={{ uri: getOptimizedPhotoUrl(p.cloudinary_url, 320) }}
                     style={styles.timelineImg}
@@ -158,12 +169,14 @@ export default function ProgressScreen() {
                   <Text style={styles.timelineMeta}>
                     {p.log_date} • {p.pose_tag}
                   </Text>
-                </View>
+                </Pressable>
               ))}
             </ScrollView>
           </>
         )}
       </View>
+
+      <PhotoLightboxModal photo={enlargedPhoto} onClose={() => setEnlargedPhoto(null)} />
     </ScrollView>
   );
 }

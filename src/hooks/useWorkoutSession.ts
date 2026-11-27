@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSelectedDate } from '../context/DateContext';
 import { getCachedJson, setCachedJson } from '../lib/storage';
@@ -23,8 +23,8 @@ interface CachedWorkoutState {
 }
 
 export interface PreviousSetSummary {
-  weight_kg: number;
-  reps: number;
+  logDate: string;
+  sets: { weight_kg: number; reps: number }[];
 }
 
 export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
@@ -40,64 +40,111 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
   const [weightPostKg, setWeightPostKg] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const latestRef = useRef<CachedWorkoutState>({
+    session: null,
+    sessionExercises: [],
+    sets: [],
+    weightPreKg: null,
+    weightPostKg: null,
+  });
+  const activeDateRef = useRef(today);
+
+  useEffect(() => {
+    latestRef.current = {
+      session,
+      sessionExercises,
+      sets,
+      weightPreKg,
+      weightPostKg,
+    };
+    activeDateRef.current = today;
+  }, [session, sessionExercises, sets, weightPreKg, weightPostKg, today]);
+
   const persistCache = useCallback(
     (next: Partial<CachedWorkoutState>) => {
+      const cur = latestRef.current;
       setCachedJson<CachedWorkoutState>(cacheKey, {
-        session: next.session !== undefined ? next.session : session,
+        session: next.session !== undefined ? next.session : cur.session,
         sessionExercises:
-          next.sessionExercises !== undefined ? next.sessionExercises : sessionExercises,
-        sets: next.sets !== undefined ? next.sets : sets,
-        weightPreKg: next.weightPreKg !== undefined ? next.weightPreKg : weightPreKg,
-        weightPostKg: next.weightPostKg !== undefined ? next.weightPostKg : weightPostKg,
+          next.sessionExercises !== undefined ? next.sessionExercises : cur.sessionExercises,
+        sets: next.sets !== undefined ? next.sets : cur.sets,
+        weightPreKg: next.weightPreKg !== undefined ? next.weightPreKg : cur.weightPreKg,
+        weightPostKg: next.weightPostKg !== undefined ? next.weightPostKg : cur.weightPostKg,
       });
     },
-    [cacheKey, session, sessionExercises, sets, weightPreKg, weightPostKg]
+    [cacheKey]
   );
 
   const loadPreviousSets = useCallback(
-    async (exerciseIds: string[], currentSessionId: string) => {
+    async (exerciseIds: string[], _currentSessionId: string) => {
       if (!user || exerciseIds.length === 0) return;
       try {
         const { data } = await supabase
           .from('workout_sets')
-          .select('exercise_id, weight_kg, reps, session_id, set_type, logged_at')
+          .select(
+            'exercise_id, weight_kg, reps, set_number, session:workout_sessions!inner(log_date, user_id)'
+          )
+          .eq('session.user_id', user.id)
+          .lt('session.log_date', today)
           .in('exercise_id', exerciseIds)
-          .neq('session_id', currentSessionId)
           .neq('set_type', 'warmup')
-          .order('logged_at', { ascending: false })
-          .limit(100);
+          .order('set_number', { ascending: true });
 
         if (!data) return;
+
+        // Group by exercise_id and pick only the most recent previous log_date per exercise
+        const latestDateByEx: Record<string, string> = {};
+        for (const row of data) {
+          const sess = Array.isArray(row.session) ? row.session[0] : row.session;
+          const logDate = (sess as { log_date?: string } | null)?.log_date;
+          if (!logDate) continue;
+          if (!latestDateByEx[row.exercise_id] || logDate > latestDateByEx[row.exercise_id]) {
+            latestDateByEx[row.exercise_id] = logDate;
+          }
+        }
+
         const map: Record<string, PreviousSetSummary> = {};
         for (const row of data) {
+          const sess = Array.isArray(row.session) ? row.session[0] : row.session;
+          const logDate = (sess as { log_date?: string } | null)?.log_date;
+          if (!logDate || logDate !== latestDateByEx[row.exercise_id]) continue;
           if (!map[row.exercise_id]) {
-            map[row.exercise_id] = {
-              weight_kg: Number(row.weight_kg),
-              reps: row.reps,
-            };
+            map[row.exercise_id] = { logDate, sets: [] };
           }
+          map[row.exercise_id].sets.push({
+            weight_kg: Number(row.weight_kg),
+            reps: row.reps,
+          });
         }
         setPreviousByExercise(map);
       } catch {
         // Ignore offline
       }
     },
-    [user]
+    [today, user]
   );
 
   const loadTodaySession = useCallback(async () => {
+    const requestDate = today;
     if (!user) {
       setLoading(false);
       return;
     }
 
     const cached = await getCachedJson<CachedWorkoutState>(cacheKey);
+    if (activeDateRef.current !== requestDate) return;
     if (cached) {
       setSession(cached.session);
       setSessionExercises(cached.sessionExercises);
       setSets(cached.sets);
       setWeightPreKg(cached.weightPreKg);
       setWeightPostKg(cached.weightPostKg);
+    } else {
+      setSession(null);
+      setSessionExercises([]);
+      setSets([]);
+      setWeightPreKg(null);
+      setWeightPostKg(null);
     }
 
     try {
@@ -106,22 +153,23 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
           .from('daily_logs')
           .select('weight_pre_kg, weight_post_kg')
           .eq('user_id', user.id)
-          .eq('log_date', today)
+          .eq('log_date', requestDate)
           .maybeSingle(),
         supabase
           .from('workout_sessions')
           .select('*')
           .eq('user_id', user.id)
-          .eq('log_date', today)
+          .eq('log_date', requestDate)
           .order('started_at', { ascending: false })
           .limit(1)
           .maybeSingle(),
       ]);
 
-      if (dailyData) {
-        setWeightPreKg(dailyData.weight_pre_kg ? Number(dailyData.weight_pre_kg) : null);
-        setWeightPostKg(dailyData.weight_post_kg ? Number(dailyData.weight_post_kg) : null);
-      }
+      if (activeDateRef.current !== requestDate) return;
+      const nextPre = dailyData?.weight_pre_kg ? Number(dailyData.weight_pre_kg) : null;
+      const nextPost = dailyData?.weight_post_kg ? Number(dailyData.weight_post_kg) : null;
+      setWeightPreKg(nextPre);
+      setWeightPostKg(nextPost);
 
       if (existingSession) {
         const typedSession = existingSession as WorkoutSession;
@@ -138,12 +186,19 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
             .order('logged_at'),
         ]);
 
+        if (activeDateRef.current !== requestDate) return;
         const nextSe = (seData ?? []) as WorkoutSessionExercise[];
         const nextSets = (setData ?? []) as WorkoutSet[];
         setSession(typedSession);
         setSessionExercises(nextSe);
         setSets(nextSets);
-        persistCache({ session: typedSession, sessionExercises: nextSe, sets: nextSets });
+        persistCache({
+          session: typedSession,
+          sessionExercises: nextSe,
+          sets: nextSets,
+          weightPreKg: nextPre,
+          weightPostKg: nextPost,
+        });
 
         await loadPreviousSets(
           nextSe.map((e) => e.exercise_id),
@@ -153,11 +208,20 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
         setSession(null);
         setSessionExercises([]);
         setSets([]);
+        persistCache({
+          session: null,
+          sessionExercises: [],
+          sets: [],
+          weightPreKg: nextPre,
+          weightPostKg: nextPost,
+        });
       }
     } catch {
       // Keep cached data if offline
     } finally {
-      setLoading(false);
+      if (activeDateRef.current === requestDate) {
+        setLoading(false);
+      }
     }
   }, [cacheKey, loadPreviousSets, persistCache, today, user]);
 
@@ -220,6 +284,83 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
     setSessionExercises(next);
     persistCache({ sessionExercises: next });
     await loadPreviousSets([exercise.id], session.id);
+  };
+
+  const reorderSessionExercises = async (reordered: WorkoutSessionExercise[]) => {
+    const withIndices = reordered.map((item, idx) => ({ ...item, order_index: idx }));
+    setSessionExercises(withIndices);
+    persistCache({ sessionExercises: withIndices });
+    await Promise.all(
+      withIndices.map((item) =>
+        supabase
+          .from('workout_session_exercises')
+          .update({ order_index: item.order_index })
+          .eq('id', item.id)
+      )
+    );
+  };
+
+  const addExerciseByName = async (
+    rawName: string,
+    primaryMuscle: Exercise['primary_muscle'] = 'other' as Exercise['primary_muscle']
+  ): Promise<WorkoutSessionExercise | null> => {
+    if (!user || !session) return null;
+    const name = rawName.trim();
+    if (!name) return null;
+
+    const lower = name.toLowerCase();
+    const inferredMuscle: Exercise['primary_muscle'] =
+      lower.includes('plank') || lower.includes('crunch') || lower.includes('ab')
+        ? 'abs'
+        : lower.includes('walk') || lower.includes('cycl') || lower.includes('run') || lower.includes('cardio')
+          ? 'cardio'
+          : primaryMuscle === ('other' as Exercise['primary_muscle'])
+            ? 'chest'
+            : primaryMuscle;
+
+    const { data: existing } = await supabase
+      .from('exercises')
+      .select('*')
+      .ilike('name', name)
+      .limit(1)
+      .maybeSingle();
+
+    let ex = existing as Exercise | null;
+    if (!ex) {
+      const { data: created, error: exErr } = await supabase
+        .from('exercises')
+        .insert({
+          user_id: user.id,
+          name,
+          primary_muscle: inferredMuscle,
+          equipment: inferredMuscle === 'abs' ? 'bodyweight' : 'other',
+        })
+        .select()
+        .single();
+      if (exErr) throw exErr;
+      ex = created as Exercise;
+    }
+
+    const alreadyInSession = sessionExercises.find((se) => se.exercise_id === ex.id);
+    if (alreadyInSession) return alreadyInSession;
+
+    const { data: seRow, error: seErr } = await supabase
+      .from('workout_session_exercises')
+      .insert({
+        session_id: session.id,
+        exercise_id: ex.id,
+        order_index: sessionExercises.length,
+        status: 'pending',
+      })
+      .select('*, exercise:exercises(*)')
+      .single();
+
+    if (seErr) throw seErr;
+    const typed = seRow as WorkoutSessionExercise;
+    const next = [...sessionExercises, typed];
+    setSessionExercises(next);
+    persistCache({ sessionExercises: next });
+    return typed;
   };
 
   /**
@@ -327,6 +468,8 @@ export function useWorkoutSession(todaySplit?: DaySplitWithExercises) {
     refresh: loadTodaySession,
     startTodayWorkout,
     addExerciseToSession,
+    addExerciseByName,
+    reorderSessionExercises,
     setExerciseStatus,
     logSet,
     deleteSet,

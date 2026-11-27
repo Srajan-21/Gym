@@ -10,8 +10,10 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { Plus, Trash2, X } from 'lucide-react-native';
+import { Calendar, Plus, Trash2, X } from 'lucide-react-native';
+import { addDays } from '../context/DateContext';
 import { DAY_NAMES, FULL_DAY_NAMES, useSplit } from '../hooks/useSplit';
+import { getTodayDateString } from '../lib/storage';
 import { Colors } from '../theme/colors';
 import { EquipmentType, MuscleGroup } from '../types/database';
 
@@ -42,17 +44,48 @@ export default function SplitPlannerScreen() {
   const {
     exercises,
     splitsByDay,
+    periodPlans,
     upsertDaySplit,
     addExerciseToDay,
     removeExerciseFromDay,
+    createPeriodPlan,
+    deletePeriodPlan,
+    upsertPeriodDaySplit,
+    addExerciseToPeriodDay,
+    removeExerciseFromPeriodDay,
     createCustomExercise,
   } = useSplit();
 
-  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay());
-  const currentDayData = splitsByDay[selectedDay];
+  const today = getTodayDateString();
+  const [plannerMode, setPlannerMode] = useState<'period' | 'weekly'>('period');
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [planName, setPlanName] = useState('');
+  const [fromDate, setFromDate] = useState(today);
+  const [toDate, setToDate] = useState(addDays(today, 29));
 
-  const [splitName, setSplitName] = useState(currentDayData?.split.split_name ?? '');
-  const [isRestDay, setIsRestDay] = useState(currentDayData?.split.is_rest_day ?? false);
+  const activePlan =
+    periodPlans.find((p) => p.id === selectedPlanId) ?? periodPlans[0] ?? null;
+
+  const [selectedDay, setSelectedDay] = useState<number>(new Date().getDay());
+
+  const currentPeriodDay = activePlan?.days[selectedDay];
+  const currentWeeklyDay = splitsByDay[selectedDay];
+
+  const resolvedDayName =
+    plannerMode === 'period'
+      ? (currentPeriodDay?.splitName ?? '')
+      : (currentWeeklyDay?.split.split_name ?? '');
+  const resolvedIsRest =
+    plannerMode === 'period'
+      ? (currentPeriodDay?.isRestDay ?? false)
+      : (currentWeeklyDay?.split.is_rest_day ?? false);
+  const resolvedExercises =
+    plannerMode === 'period'
+      ? (currentPeriodDay?.exercises ?? [])
+      : (currentWeeklyDay?.exercises ?? []);
+
+  const [splitName, setSplitName] = useState(resolvedDayName);
+  const [isRestDay, setIsRestDay] = useState(resolvedIsRest);
 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -64,20 +97,49 @@ export default function SplitPlannerScreen() {
   const [customMuscle, setCustomMuscle] = useState<MuscleGroup>('chest');
   const [customEquipment, setCustomEquipment] = useState<EquipmentType>('machine');
 
+  const syncDayFields = (mode: 'period' | 'weekly', dayIdx: number, plan = activePlan) => {
+    if (mode === 'period') {
+      const d = plan?.days[dayIdx];
+      setSplitName(d?.splitName ?? '');
+      setIsRestDay(d?.isRestDay ?? false);
+    } else {
+      const d = splitsByDay[dayIdx];
+      setSplitName(d?.split.split_name ?? '');
+      setIsRestDay(d?.split.is_rest_day ?? false);
+    }
+  };
+
   const handleSelectDay = (dayIdx: number) => {
     setSelectedDay(dayIdx);
-    const dayData = splitsByDay[dayIdx];
-    setSplitName(dayData?.split.split_name ?? '');
-    setIsRestDay(dayData?.split.is_rest_day ?? false);
+    syncDayFields(plannerMode, dayIdx);
+  };
+
+  const handleCreatePeriod = async () => {
+    try {
+      const created = await createPeriodPlan(planName, fromDate, toDate);
+      if (created) {
+        setSelectedPlanId(created.id);
+        setPlanName('');
+        syncDayFields('period', selectedDay, created);
+        Alert.alert('Period Plan Created', `${created.startDate} to ${created.endDate}`);
+      }
+    } catch (err) {
+      Alert.alert('Invalid Dates', err instanceof Error ? err.message : 'Check dates.');
+    }
   };
 
   const handleSaveDayHeader = async () => {
     try {
-      await upsertDaySplit(
-        selectedDay,
-        splitName || `${FULL_DAY_NAMES[selectedDay]} Workout`,
-        isRestDay
-      );
+      const nameToSave = splitName || `${FULL_DAY_NAMES[selectedDay]} Workout`;
+      if (plannerMode === 'period') {
+        if (!activePlan) {
+          Alert.alert('Create a Period First', 'Select From & To dates and tap Create Period Plan above.');
+          return;
+        }
+        await upsertPeriodDaySplit(activePlan.id, selectedDay, nameToSave, isRestDay);
+      } else {
+        await upsertDaySplit(selectedDay, nameToSave, isRestDay);
+      }
       Alert.alert('Saved', `${FULL_DAY_NAMES[selectedDay]} split updated.`);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to save split.');
@@ -86,12 +148,17 @@ export default function SplitPlannerScreen() {
 
   const handleAddExercise = async (exerciseId: string) => {
     try {
-      await addExerciseToDay(
-        selectedDay,
-        exerciseId,
-        Math.max(1, parseInt(targetSets, 10) || 3),
-        targetRepRange.trim() || '8-12'
-      );
+      const setsCount = Math.max(1, parseInt(targetSets, 10) || 3);
+      const repsText = targetRepRange.trim() || '8-12';
+      if (plannerMode === 'period') {
+        if (!activePlan) {
+          Alert.alert('Create a Period First', 'Select From & To dates and tap Create Period Plan above.');
+          return;
+        }
+        await addExerciseToPeriodDay(activePlan.id, selectedDay, exerciseId, setsCount, repsText);
+      } else {
+        await addExerciseToDay(selectedDay, exerciseId, setsCount, repsText);
+      }
       setPickerOpen(false);
     } catch (err) {
       Alert.alert('Error', err instanceof Error ? err.message : 'Could not add exercise.');
@@ -121,6 +188,32 @@ export default function SplitPlannerScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Mode Toggle at Top */}
+      <View style={styles.modeBar}>
+        <Pressable
+          style={[styles.modePill, plannerMode === 'period' && styles.modePillActive]}
+          onPress={() => {
+            setPlannerMode('period');
+            syncDayFields('period', selectedDay);
+          }}
+        >
+          <Text style={[styles.modeText, plannerMode === 'period' && styles.modeTextActive]}>
+            Date Range Plan
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.modePill, plannerMode === 'weekly' && styles.modePillActive]}
+          onPress={() => {
+            setPlannerMode('weekly');
+            syncDayFields('weekly', selectedDay);
+          }}
+        >
+          <Text style={[styles.modeText, plannerMode === 'weekly' && styles.modeTextActive]}>
+            Weekly Default
+          </Text>
+        </Pressable>
+      </View>
+
       {/* Day Selector Strip */}
       <ScrollView
         horizontal
@@ -130,7 +223,10 @@ export default function SplitPlannerScreen() {
       >
         {DAY_NAMES.map((label, idx) => {
           const active = idx === selectedDay;
-          const hasSplit = Boolean(splitsByDay[idx]);
+          const hasSplit =
+            plannerMode === 'period'
+              ? Boolean(activePlan?.days[idx])
+              : Boolean(splitsByDay[idx]);
           return (
             <Pressable
               key={label}
@@ -147,8 +243,142 @@ export default function SplitPlannerScreen() {
       </ScrollView>
 
       <ScrollView contentContainerStyle={styles.content}>
+        {plannerMode === 'period' && (
+          <View style={styles.card}>
+            <View style={styles.rowBetween}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Calendar size={16} color={Colors.gold} />
+                <Text style={styles.sectionTitle}>Select Split Dates</Text>
+              </View>
+            </View>
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  const day = new Date().getDay();
+                  const daysToNextMon = day === 0 ? 1 : 8 - day;
+                  const nextMon = addDays(today, daysToNextMon);
+                  setFromDate(nextMon);
+                  setToDate(addDays(nextMon, 6));
+                }}
+              >
+                <Text style={styles.chipText}>Next Week (Mon–Sun)</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  setFromDate(today);
+                  setToDate(addDays(today, 6));
+                }}
+              >
+                <Text style={styles.chipText}>This Week (7d)</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  setFromDate(today);
+                  setToDate(addDays(today, 13));
+                }}
+              >
+                <Text style={styles.chipText}>Next 2 Weeks</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  setFromDate(today);
+                  setToDate(addDays(today, 29));
+                }}
+              >
+                <Text style={styles.chipText}>30 Days</Text>
+              </Pressable>
+              <Pressable
+                style={styles.chip}
+                onPress={() => {
+                  setFromDate(addDays(today, -14));
+                  setToDate(today);
+                }}
+              >
+                <Text style={styles.chipText}>Past 14 Days</Text>
+              </Pressable>
+            </ScrollView>
+
+            <View style={styles.rowGap}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.miniLabel}>From Date</Text>
+                <TextInput
+                  style={styles.input}
+                  value={fromDate}
+                  onChangeText={setFromDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={Colors.textMuted}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.miniLabel}>To Date</Text>
+                <TextInput
+                  style={styles.input}
+                  value={toDate}
+                  onChangeText={setToDate}
+                  placeholder="YYYY-MM-DD"
+                  placeholderTextColor={Colors.textMuted}
+                />
+              </View>
+            </View>
+
+            <TextInput
+              style={styles.input}
+              placeholder="Plan name (optional, e.g. Nov PPL Block)"
+              placeholderTextColor={Colors.textMuted}
+              value={planName}
+              onChangeText={setPlanName}
+            />
+
+            <Pressable style={styles.primaryBtn} onPress={handleCreatePeriod}>
+              <Text style={styles.primaryBtnText}>Create Period Plan</Text>
+            </Pressable>
+
+            {periodPlans.length > 0 && (
+              <View style={{ gap: 8, marginTop: 4 }}>
+                <Text style={styles.miniLabel}>Saved Date-Range Plans (tap to edit):</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+                  {periodPlans.map((plan) => {
+                    const selected = activePlan?.id === plan.id;
+                    return (
+                      <View
+                        key={plan.id}
+                        style={[styles.planChip, selected && styles.planChipActive]}
+                      >
+                        <Pressable
+                          onPress={() => {
+                            setSelectedPlanId(plan.id);
+                            syncDayFields('period', selectedDay, plan);
+                          }}
+                        >
+                          <Text style={[styles.planChipTitle, selected && { color: Colors.gold }]}>
+                            {plan.name}
+                          </Text>
+                          <Text style={styles.planChipDates}>
+                            {plan.startDate} → {plan.endDate}
+                          </Text>
+                        </Pressable>
+                        <Pressable onPress={() => deletePeriodPlan(plan.id)}>
+                          <X size={14} color={Colors.textMuted} />
+                        </Pressable>
+                      </View>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+          </View>
+        )}
+
         <View style={styles.card}>
-          <Text style={styles.sectionTitle}>{FULL_DAY_NAMES[selectedDay]}</Text>
+          <Text style={styles.sectionTitle}>
+            {FULL_DAY_NAMES[selectedDay]}
+            {plannerMode === 'period' && activePlan ? ` • ${activePlan.name}` : ''}
+          </Text>
           <TextInput
             style={styles.input}
             placeholder="Split name (e.g., Push Day, Chest + Triceps)"
@@ -179,13 +409,13 @@ export default function SplitPlannerScreen() {
               </Pressable>
             </View>
 
-            {(currentDayData?.exercises ?? []).length === 0 ? (
+            {resolvedExercises.length === 0 ? (
               <Text style={styles.emptyText}>
                 No exercises planned yet for {FULL_DAY_NAMES[selectedDay]}. Tap Add to build your
                 routine.
               </Text>
             ) : (
-              currentDayData?.exercises.map((item, idx) => (
+              resolvedExercises.map((item, idx) => (
                 <View key={item.id} style={styles.exerciseRow}>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.exerciseName}>
@@ -196,7 +426,15 @@ export default function SplitPlannerScreen() {
                       {item.exercise?.primary_muscle}
                     </Text>
                   </View>
-                  <Pressable onPress={() => removeExerciseFromDay(item.id)}>
+                  <Pressable
+                    onPress={() => {
+                      if (plannerMode === 'period' && activePlan) {
+                        void removeExerciseFromPeriodDay(activePlan.id, selectedDay, item.id);
+                      } else {
+                        void removeExerciseFromDay(item.id);
+                      }
+                    }}
+                  >
                     <Trash2 size={18} color={Colors.danger} />
                   </Pressable>
                 </View>
@@ -441,4 +679,42 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: Colors.primarySoft, borderColor: Colors.primary },
   chipText: { color: Colors.textSecondary, fontSize: 12 },
   chipTextActive: { color: Colors.primary, fontWeight: '600' },
+  modeBar: {
+    flexDirection: 'row',
+    gap: 8,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+  },
+  modePill: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  modePillActive: {
+    backgroundColor: Colors.goldSoft,
+    borderColor: Colors.gold,
+  },
+  modeText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700' },
+  modeTextActive: { color: Colors.gold },
+  planChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  planChipActive: {
+    backgroundColor: Colors.goldSoft,
+    borderColor: Colors.gold,
+  },
+  planChipTitle: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  planChipDates: { color: Colors.textMuted, fontSize: 11, marginTop: 2 },
 });

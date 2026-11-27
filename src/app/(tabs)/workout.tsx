@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   AppState,
   Modal,
@@ -11,51 +12,53 @@ import {
   View,
 } from 'react-native';
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { useRouter } from 'expo-router';
 import {
-  Calendar,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Camera,
+  Check,
   CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  PauseCircle,
+  Pause,
   Play,
   Plus,
-  Trash2,
+  RotateCcw,
+  Square,
   X,
 } from 'lucide-react-native';
-import { DateStrip } from '../../components/DateStrip';
 import {
   formatReadableDate,
   getDayOfWeekFromDate,
   useSelectedDate,
 } from '../../context/DateContext';
+import { getTodayDateString } from '../../lib/storage';
+import { useDailyHabits } from '../../hooks/useDailyHabits';
 import { FULL_DAY_NAMES, useSplit } from '../../hooks/useSplit';
 import { useWorkoutSession } from '../../hooks/useWorkoutSession';
+import { formatSetDisplay } from '../../lib/workoutFormat';
 import { GymAndroidNative } from '../../native/GymAndroidNative';
 import { Colors } from '../../theme/colors';
-import { EffortLevel, ExerciseStatus, SetType } from '../../types/database';
+import { PoseTag } from '../../types/database';
 
-const SET_TYPES: { value: SetType; label: string }[] = [
-  { value: 'warmup', label: 'Warm-up' },
-  { value: 'working', label: 'Working' },
-  { value: 'drop', label: 'Drop' },
-  { value: 'failure', label: 'Failure' },
-];
-
-const EFFORT_LEVELS: { value: EffortLevel; label: string }[] = [
-  { value: 'easy', label: 'Easy' },
-  { value: 'moderate', label: 'Moderate' },
-  { value: 'hard', label: 'Hard' },
-  { value: 'failure', label: 'Failure' },
-];
+type FlowStage =
+  | 'idle'
+  | 'pre_weight'
+  | 'pre_warmup'
+  | 'exercises'
+  | 'post_exercises_choice'
+  | 'cardio'
+  | 'post_weight'
+  | 'cooldown_photo';
 
 export default function WorkoutScreen() {
   const router = useRouter();
-  const { selectedDate } = useSelectedDate();
+  const { selectedDate, resetToToday } = useSelectedDate();
   const todayIndex = getDayOfWeekFromDate(selectedDate);
-  const { splitsByDay, exercises: allExercises } = useSplit();
-  const todaySplit = splitsByDay[todayIndex];
+  const isLockedFuture = selectedDate > getTodayDateString() && todayIndex !== 0;
+  const { getSplitForDate } = useSplit();
+  const { data: todaySplit } = getSplitForDate(selectedDate);
 
   const {
     session,
@@ -65,24 +68,45 @@ export default function WorkoutScreen() {
     weightPreKg,
     weightPostKg,
     startTodayWorkout,
-    addExerciseToSession,
+    addExerciseByName,
+    reorderSessionExercises,
     setExerciseStatus,
     logSet,
-    deleteSet,
     finishWorkout,
     saveWorkoutWeight,
   } = useWorkoutSession(todaySplit);
 
-  const [expandedExerciseId, setExpandedExerciseId] = useState<string | null>(null);
-  const [weightInput, setWeightInput] = useState('');
-  const [repsInput, setRepsInput] = useState('');
-  const [setType, setSetType] = useState<SetType>('working');
-  const [effort, setEffort] = useState<EffortLevel>('moderate');
+  const { addProgressPhoto, uploadingPhoto, todayPhotos } = useDailyHabits();
 
-  const [preInput, setPreInput] = useState('');
-  const [postInput, setPostInput] = useState('');
-  const [addModalOpen, setAddModalOpen] = useState(false);
-  const [searchQuery, setSearchQuery] = useState('');
+  const [stage, setStage] = useState<FlowStage>('idle');
+  const [preWeightInput, setPreWeightInput] = useState('');
+  const [postWeightInput, setPostWeightInput] = useState('');
+  const [preWarmupDone, setPreWarmupDone] = useState(false);
+  const [postWarmupDone, setPostWarmupDone] = useState(false);
+
+  const [currentExIdx, setCurrentExIdx] = useState(0);
+  const [repsInput, setRepsInput] = useState('');
+  const [weightInput, setWeightInput] = useState('');
+  const [adHocMap, setAdHocMap] = useState<Record<string, boolean>>({});
+
+  // Reorder & Add modal
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
+  const [swapSourceIdx, setSwapSourceIdx] = useState<number | null>(null);
+  const [newExName, setNewExName] = useState('');
+  const [postNewExName, setPostNewExName] = useState('');
+  const [warmupExtraName, setWarmupExtraName] = useState('');
+
+  // Cardio timer state
+  const [cardioName, setCardioName] = useState('Walking');
+  const [cardioSeconds, setCardioSeconds] = useState(0);
+  const [cardioRunning, setCardioRunning] = useState(false);
+  const [loggedCardios, setLoggedCardios] = useState<{ name: string; mins: number }[]>([]);
+
+  useEffect(() => {
+    if (!cardioRunning) return;
+    const id = setInterval(() => setCardioSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [cardioRunning]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
@@ -106,87 +130,22 @@ export default function WorkoutScreen() {
     return () => sub.remove();
   }, [logSet, session]);
 
-  const sweatLoss = useMemo(() => {
-    if (weightPreKg && weightPostKg) {
-      return (weightPreKg - weightPostKg).toFixed(2);
-    }
-    return null;
-  }, [weightPreKg, weightPostKg]);
+  const currentEx = sessionExercises[currentExIdx];
+  const nextEx = sessionExercises[currentExIdx + 1];
+  const prevExSummary = currentEx ? previousByExercise[currentEx.exercise_id] : undefined;
 
-  const handleSelectExercise = async (exerciseId: string, currentStatus: ExerciseStatus) => {
-    if (expandedExerciseId === exerciseId) {
-      setExpandedExerciseId(null);
-      return;
-    }
-    setExpandedExerciseId(exerciseId);
+  const currentExSets = useMemo(() => {
+    if (!currentEx) return [];
+    return sets.filter((s) => s.exercise_id === currentEx.exercise_id);
+  }, [currentEx, sets]);
 
-    // Pre-fill from last set in this session or previous session
-    const sessionExSets = sets.filter((s) => s.exercise_id === exerciseId);
-    const lastSet = sessionExSets[sessionExSets.length - 1];
-    if (lastSet) {
-      setWeightInput(String(lastSet.weight_kg));
-      setRepsInput(String(lastSet.reps));
-    } else if (previousByExercise[exerciseId]) {
-      setWeightInput(String(previousByExercise[exerciseId].weight_kg));
-      setRepsInput(String(previousByExercise[exerciseId].reps));
-    } else {
-      setWeightInput('');
-      setRepsInput('');
-    }
+  const plannedTargetSets = useMemo(() => {
+    if (!currentEx || !todaySplit) return 3;
+    const match = todaySplit.exercises.find((e) => e.exercise_id === currentEx.exercise_id);
+    return match?.target_sets ?? 3;
+  }, [currentEx, todaySplit]);
 
-    if (currentStatus === 'pending') {
-      await setExerciseStatus(exerciseId, 'in_progress');
-    }
-  };
-
-  const handleLogSet = async (exerciseId: string) => {
-    const w = parseFloat(weightInput) || 0;
-    const r = parseInt(repsInput, 10) || 0;
-    if (r <= 0) {
-      Alert.alert('Invalid Reps', 'Enter at least 1 rep.');
-      return;
-    }
-
-    try {
-      await logSet({ exerciseId, weightKg: w, reps: r, setType, effort });
-      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Could not log set.');
-    }
-  };
-
-  const handleSaveWeight = async (type: 'pre' | 'post') => {
-    const raw = type === 'pre' ? preInput : postInput;
-    const parsed = parseFloat(raw);
-    if (Number.isNaN(parsed) || parsed <= 0) return;
-    await saveWorkoutWeight(type, parsed);
-    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  };
-
-  const getStatusBadge = (status: ExerciseStatus) => {
-    if (status === 'completed') {
-      return {
-        label: 'Done',
-        bg: Colors.successSoft,
-        color: Colors.success,
-        icon: <CheckCircle2 size={14} color={Colors.success} />,
-      };
-    }
-    if (status === 'in_progress') {
-      return {
-        label: 'In Progress',
-        bg: Colors.amberSoft,
-        color: Colors.amber,
-        icon: <PauseCircle size={14} color={Colors.amber} />,
-      };
-    }
-    return {
-      label: 'Pending',
-      bg: Colors.surfaceElevated,
-      color: Colors.textSecondary,
-      icon: <Clock size={14} color={Colors.textSecondary} />,
-    };
-  };
+  const isAdHocCurrent = currentEx ? Boolean(adHocMap[currentEx.exercise_id]) : false;
 
   const handleLaunchOverlay = async () => {
     if (!GymAndroidNative.isSupported()) {
@@ -208,339 +167,707 @@ export default function WorkoutScreen() {
       );
       return;
     }
-    const activeEx =
-      sessionExercises.find((e) => e.exercise_id === expandedExerciseId) ??
-      sessionExercises[0];
     GymAndroidNative.startFloatingOverlay(
-      activeEx?.exercise_id ?? 'freestyle',
-      activeEx?.exercise?.name ?? 'Freestyle Set',
+      currentEx?.exercise_id ?? 'freestyle',
+      currentEx?.exercise?.name ?? 'Freestyle Set',
       parseFloat(weightInput) || 20,
       parseInt(repsInput, 10) || 10
     );
   };
 
-  const filteredAddExercises = allExercises.filter((e) =>
-    e.name.toLowerCase().includes(searchQuery.trim().toLowerCase())
-  );
+  const handleStartFlow = async () => {
+    if (!session) {
+      await startTodayWorkout();
+    }
+    setPreWeightInput(weightPreKg != null ? String(weightPreKg) : '');
+    setPostWeightInput(weightPostKg != null ? String(weightPostKg) : '');
+    setStage('pre_weight');
+  };
+
+  const handleSavePreWeight = async (skip = false) => {
+    if (!skip && preWeightInput.trim()) {
+      const parsed = parseFloat(preWeightInput);
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        Alert.alert('Invalid Weight', 'Enter a valid weight in kg.');
+        return;
+      }
+      await saveWorkoutWeight('pre', parsed);
+    }
+    setStage('pre_warmup');
+  };
+
+  const handleAddExtraExerciseAndJump = async (rawName: string, markAdHoc = true) => {
+    const trimmed = rawName.trim();
+    if (!trimmed) return;
+    if (!session) await startTodayWorkout();
+    const added = await addExerciseByName(trimmed);
+    if (added) {
+      if (markAdHoc) {
+        setAdHocMap((prev) => ({ ...prev, [added.exercise_id]: true }));
+      }
+      const nextIdx = sessionExercises.findIndex((se) => se.exercise_id === added.exercise_id);
+      setCurrentExIdx(nextIdx >= 0 ? nextIdx : sessionExercises.length);
+      setRepsInput('');
+      setWeightInput('');
+      setStage('exercises');
+    }
+  };
+
+  const handleSameWeight = () => {
+    const lastSet = currentExSets[currentExSets.length - 1];
+    if (lastSet) {
+      setWeightInput(String(lastSet.weight_kg));
+    } else {
+      Alert.alert('No Previous Set', 'Log Set 1 weight first to reuse it.');
+    }
+  };
+
+  const advanceToNextExerciseOrFinish = () => {
+    setRepsInput('');
+    setWeightInput('');
+    if (currentExIdx + 1 < sessionExercises.length) {
+      setCurrentExIdx((i) => i + 1);
+    } else {
+      setStage('post_exercises_choice');
+    }
+  };
+
+  const handleCompleteSet = async (action: 'auto' | 'next_set' | 'next_exercise') => {
+    if (!currentEx) return;
+    const reps = parseInt(repsInput, 10);
+    const weight = parseFloat(weightInput) || 0;
+
+    if (action === 'next_exercise' && (!repsInput.trim() || Number.isNaN(reps) || reps <= 0)) {
+      await setExerciseStatus(currentEx.exercise_id, 'completed');
+      advanceToNextExerciseOrFinish();
+      return;
+    }
+
+    if (Number.isNaN(reps) || reps <= 0) {
+      Alert.alert('Enter Reps', 'Fill in repetitions for this set.');
+      return;
+    }
+
+    await logSet({
+      exerciseId: currentEx.exercise_id,
+      weightKg: weight,
+      reps,
+      setType: 'working',
+      effort: 'moderate',
+    });
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setRepsInput('');
+
+    const newCount = currentExSets.length + 1;
+    if (action === 'next_exercise') {
+      await setExerciseStatus(currentEx.exercise_id, 'completed');
+      advanceToNextExerciseOrFinish();
+    } else if (action === 'next_set') {
+      // Stay on current exercise for next set
+    } else if (!isAdHocCurrent && newCount >= plannedTargetSets) {
+      await setExerciseStatus(currentEx.exercise_id, 'completed');
+      advanceToNextExerciseOrFinish();
+    }
+  };
+
+  const handleSwapOrMove = async (fromIdx: number, toIdx: number) => {
+    if (toIdx < 0 || toIdx >= sessionExercises.length || fromIdx === toIdx) return;
+    const copy = [...sessionExercises];
+    const [moved] = copy.splice(fromIdx, 1);
+    copy.splice(toIdx, 0, moved);
+    await reorderSessionExercises(copy);
+    if (currentExIdx === fromIdx) setCurrentExIdx(toIdx);
+    setSwapSourceIdx(null);
+  };
+
+  const handleAddCardioEntry = async (andContinue: boolean) => {
+    setCardioRunning(false);
+    const mins = Math.max(1, Math.round(cardioSeconds / 60));
+    if (cardioSeconds > 0 || cardioName.trim()) {
+      const label = cardioName.trim() || 'Cardio';
+      const added = await addExerciseByName(label, 'cardio');
+      if (added) {
+        await logSet({
+          exerciseId: added.exercise_id,
+          weightKg: 0,
+          reps: mins,
+          setType: 'working',
+          effort: 'moderate',
+        });
+        await setExerciseStatus(added.exercise_id, 'completed');
+      }
+      setLoggedCardios((prev) => [...prev, { name: label, mins }]);
+    }
+    setCardioSeconds(0);
+    setCardioName('');
+    if (andContinue) {
+      setStage('post_weight');
+    }
+  };
+
+  const handleSavePostWeight = async (skip = false) => {
+    if (!skip && postWeightInput.trim()) {
+      const parsed = parseFloat(postWeightInput);
+      if (Number.isNaN(parsed) || parsed <= 0) {
+        Alert.alert('Invalid Weight', 'Enter a valid weight in kg.');
+        return;
+      }
+      await saveWorkoutWeight('post', parsed);
+    }
+    setStage('cooldown_photo');
+  };
+
+  const handlePickPhoto = async (useCamera: boolean) => {
+    const perm = useCamera
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+    if (!perm.granted) {
+      Alert.alert('Permission Needed', 'Allow camera/gallery access to upload progress photos.');
+      return;
+    }
+
+    const result = useCamera
+      ? await ImagePicker.launchCameraAsync({ quality: 0.75 })
+      : await ImagePicker.launchImageLibraryAsync({ quality: 0.75 });
+
+    if (result.canceled || !result.assets[0]) return;
+    try {
+      const tag: PoseTag = 'pump';
+      await addProgressPhoto(result.assets[0].uri, tag);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Uploaded', 'Progress photo saved for today.');
+    } catch (err) {
+      Alert.alert('Upload Failed', err instanceof Error ? err.message : 'Upload error.');
+    }
+  };
+
+  const handleFinishAll = async () => {
+    await finishWorkout();
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    setStage('idle');
+    router.replace('/(tabs)');
+  };
+
+  const formatTimer = (totalSec: number) => {
+    const mm = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const ss = String(totalSec % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <DateStrip />
-
-      {/* Header & Split Shortcut */}
-      <View style={styles.headerRow}>
+      {/* Very Top Header: Date + Overlay Button Only (No Calendar) */}
+      <View style={styles.topHeader}>
         <View>
           <Text style={styles.dayLabel}>
             {formatReadableDate(selectedDate)} • {FULL_DAY_NAMES[todayIndex]}
           </Text>
-          <Text style={styles.title}>
-            {todaySplit?.split.split_name ?? 'No Split Planned'}
-          </Text>
+          <Text style={styles.title}>{todaySplit?.split.split_name ?? 'Workout'}</Text>
         </View>
-        <View style={styles.rowGapSmall}>
-          <Pressable
-            style={styles.outlineBtn}
-            onPress={handleLaunchOverlay}
-          >
-            <Text style={styles.outlineBtnText}>Overlay</Text>
-          </Pressable>
-          <Pressable
-            style={styles.outlineBtn}
-            onPress={() => router.push('/split-planner')}
-          >
-            <Calendar size={16} color={Colors.primary} />
-            <Text style={styles.outlineBtnText}>Edit Split</Text>
-          </Pressable>
-        </View>
+        <Pressable style={styles.overlayBtn} onPress={handleLaunchOverlay}>
+          <Text style={styles.overlayBtnText}>Overlay</Text>
+        </Pressable>
       </View>
 
-      {/* Pre & Post Workout Weight Card */}
-      <View style={styles.card}>
-        <View style={styles.rowBetween}>
-          <Text style={styles.cardTitle}>Workout Body Weight (kg)</Text>
-          {sweatLoss !== null && (
-            <Text style={styles.sweatBadge}>Sweat Δ: {sweatLoss} kg</Text>
-          )}
-        </View>
-        <View style={styles.rowGap}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.miniLabel}>
-              Pre-Workout {weightPreKg ? `(${weightPreKg} kg)` : ''}
-            </Text>
-            <View style={styles.inlineInputRow}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="e.g. 74.5"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="decimal-pad"
-                value={preInput}
-                onChangeText={setPreInput}
-              />
-              <Pressable style={styles.miniSaveBtn} onPress={() => handleSaveWeight('pre')}>
-                <Text style={styles.miniSaveText}>Save</Text>
-              </Pressable>
-            </View>
-          </View>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.miniLabel}>
-              Post-Workout {weightPostKg ? `(${weightPostKg} kg)` : ''}
-            </Text>
-            <View style={styles.inlineInputRow}>
-              <TextInput
-                style={[styles.input, { flex: 1 }]}
-                placeholder="e.g. 74.1"
-                placeholderTextColor={Colors.textMuted}
-                keyboardType="decimal-pad"
-                value={postInput}
-                onChangeText={setPostInput}
-              />
-              <Pressable style={styles.miniSaveBtn} onPress={() => handleSaveWeight('post')}>
-                <Text style={styles.miniSaveText}>Save</Text>
-              </Pressable>
-            </View>
-          </View>
-        </View>
-      </View>
-
-      {/* Start Session OR Active Non-Linear Exercise List */}
-      {!session ? (
+      {/* IDLE / START SCREEN */}
+      {isLockedFuture ? (
         <View style={styles.card}>
-          <Text style={styles.cardTitle}>Ready to Train?</Text>
-          <Text style={styles.mutedText}>
-            {todaySplit && todaySplit.exercises.length > 0
-              ? `${todaySplit.exercises.length} exercises loaded from your ${todaySplit.split.split_name} template. You can switch exercises in any order during your workout.`
-              : 'No split exercises planned for today. Start a freestyle session or edit your weekly split.'}
+          <Text style={styles.stepKicker}>FUTURE DATE</Text>
+          <Text style={styles.cardTitle}>Phle aaj ka workout krle! 💪</Text>
+          <Text style={styles.muted}>
+            {formatReadableDate(selectedDate)} is in the future. Complete today&apos;s workout first.
           </Text>
-          <Pressable style={styles.primaryBtn} onPress={startTodayWorkout}>
-            <Play size={18} color={Colors.primaryText} />
-            <Text style={styles.primaryBtnText}>Start Today&apos;s Workout</Text>
+          <Pressable style={styles.primaryBtn} onPress={resetToToday}>
+            <Text style={styles.primaryBtnText}>Go to Today</Text>
           </Pressable>
         </View>
-      ) : (
-        <>
-          <View style={styles.rowBetween}>
-            <Text style={styles.sectionHeader}>
-              Exercises ({sessionExercises.filter((e) => e.status === 'completed').length}/
-              {sessionExercises.length} Done)
-            </Text>
-            <Pressable style={styles.linkBtn} onPress={() => setAddModalOpen(true)}>
-              <Plus size={16} color={Colors.primary} />
-              <Text style={styles.linkBtnText}>Add Exercise</Text>
+      ) : stage === 'idle' && (todayIndex === 0 || todaySplit?.split.is_rest_day) && !session ? (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>SUNDAY • REST &amp; PLANNING DAY</Text>
+          <Text style={styles.cardTitle}>Rest Day — Plan Next Week</Text>
+          <Text style={styles.muted}>
+            Sundays are for recovery and planning next week&apos;s workout split, calorie targets, and
+            goals.
+          </Text>
+          <View style={styles.rowGap}>
+            <Pressable
+              style={[styles.primaryBtn, { flex: 1 }]}
+              onPress={() => router.push('/split-planner')}
+            >
+              <Text style={styles.primaryBtnText}>Plan Next Week Split</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => router.push('/(tabs)/diet')}
+            >
+              <Text style={styles.outlineBtnText}>Set Targets</Text>
             </Pressable>
           </View>
-
-          {sessionExercises.map((se) => {
-            const exSets = sets.filter((s) => s.exercise_id === se.exercise_id);
-            const isExpanded = expandedExerciseId === se.exercise_id;
-            const badge = getStatusBadge(se.status);
-            const prev = previousByExercise[se.exercise_id];
-
-            return (
-              <View
-                key={se.id}
-                style={[
-                  styles.exerciseCard,
-                  isExpanded && styles.exerciseCardExpanded,
-                ]}
-              >
-                <Pressable
-                  style={styles.rowBetween}
-                  onPress={() => handleSelectExercise(se.exercise_id, se.status)}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.exerciseName}>{se.exercise?.name ?? 'Exercise'}</Text>
-                    <Text style={styles.exerciseSub}>
-                      {exSets.length} sets logged
-                      {prev ? `  •  Last: ${prev.weight_kg}kg × ${prev.reps}` : ''}
-                    </Text>
-                  </View>
-
-                  <View style={styles.rowGapSmall}>
-                    <View style={[styles.statusBadge, { backgroundColor: badge.bg }]}>
-                      {badge.icon}
-                      <Text style={[styles.statusText, { color: badge.color }]}>
-                        {badge.label}
-                      </Text>
-                    </View>
-                    {isExpanded ? (
-                      <ChevronUp size={18} color={Colors.textSecondary} />
-                    ) : (
-                      <ChevronDown size={18} color={Colors.textSecondary} />
-                    )}
-                  </View>
-                </Pressable>
-
-                {isExpanded && (
-                  <View style={styles.expandedBody}>
-                    {/* Logged Sets */}
-                    {exSets.map((s, idx) => (
-                      <View key={s.id} style={styles.setRow}>
-                        <Text style={styles.setNum}>#{idx + 1}</Text>
-                        <Text style={styles.setWeight}>
-                          {s.weight_kg} kg × {s.reps}
-                        </Text>
-                        <View style={styles.tagPill}>
-                          <Text style={styles.tagText}>{s.set_type}</Text>
-                        </View>
-                        <View style={styles.tagPill}>
-                          <Text style={styles.tagText}>{s.effort}</Text>
-                        </View>
-                        <Pressable onPress={() => deleteSet(s.id)}>
-                          <Trash2 size={15} color={Colors.danger} />
-                        </Pressable>
-                      </View>
-                    ))}
-
-                    {/* Inline Set Logger */}
-                    <View style={styles.loggerBox}>
-                      <View style={styles.rowGap}>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.miniLabel}>Weight (kg)</Text>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="0"
-                            placeholderTextColor={Colors.textMuted}
-                            keyboardType="decimal-pad"
-                            value={weightInput}
-                            onChangeText={setWeightInput}
-                          />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.miniLabel}>Reps</Text>
-                          <TextInput
-                            style={styles.input}
-                            placeholder="10"
-                            placeholderTextColor={Colors.textMuted}
-                            keyboardType="number-pad"
-                            value={repsInput}
-                            onChangeText={setRepsInput}
-                          />
-                        </View>
-                      </View>
-
-                      <Text style={styles.miniLabel}>Set Type</Text>
-                      <View style={styles.pillRow}>
-                        {SET_TYPES.map((st) => (
-                          <Pressable
-                            key={st.value}
-                            style={[styles.chip, setType === st.value && styles.chipActive]}
-                            onPress={() => setSetType(st.value)}
-                          >
-                            <Text
-                              style={[
-                                styles.chipText,
-                                setType === st.value && styles.chipTextActive,
-                              ]}
-                            >
-                              {st.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-
-                      <Text style={styles.miniLabel}>Effort</Text>
-                      <View style={styles.pillRow}>
-                        {EFFORT_LEVELS.map((ef) => (
-                          <Pressable
-                            key={ef.value}
-                            style={[styles.chip, effort === ef.value && styles.chipActive]}
-                            onPress={() => setEffort(ef.value)}
-                          >
-                            <Text
-                              style={[
-                                styles.chipText,
-                                effort === ef.value && styles.chipTextActive,
-                              ]}
-                            >
-                              {ef.label}
-                            </Text>
-                          </Pressable>
-                        ))}
-                      </View>
-
-                      <View style={styles.rowGap}>
-                        <Pressable
-                          style={[styles.primaryBtn, { flex: 1 }]}
-                          onPress={() => handleLogSet(se.exercise_id)}
-                        >
-                          <Plus size={16} color={Colors.primaryText} />
-                          <Text style={styles.primaryBtnText}>Log Set</Text>
-                        </Pressable>
-
-                        <Pressable
-                          style={styles.doneBtn}
-                          onPress={() =>
-                            setExerciseStatus(
-                              se.exercise_id,
-                              se.status === 'completed' ? 'in_progress' : 'completed'
-                            )
-                          }
-                        >
-                          <CheckCircle2 size={16} color={Colors.success} />
-                          <Text style={styles.doneBtnText}>
-                            {se.status === 'completed' ? 'Resume' : 'Done'}
-                          </Text>
-                        </Pressable>
-                      </View>
-                    </View>
-                  </View>
-                )}
-              </View>
-            );
-          })}
-
-          {session.status !== 'completed' ? (
-            <Pressable style={styles.finishBtn} onPress={finishWorkout}>
-              <CheckCircle2 size={18} color="#fff" />
-              <Text style={styles.primaryBtnText}>Finish Workout</Text>
-            </Pressable>
-          ) : (
-            <View style={styles.completedBanner}>
-              <CheckCircle2 size={18} color={Colors.success} />
-              <Text style={styles.completedText}>Workout Completed! Great session.</Text>
+          <Pressable onPress={handleStartFlow}>
+            <Text style={[styles.muted, { textAlign: 'center', marginTop: 4 }]}>
+              Or tap here to start a freestyle workout anyway
+            </Text>
+          </Pressable>
+        </View>
+      ) : stage === 'idle' && (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>
+            {session?.status === 'completed'
+              ? 'Workout Completed'
+              : session
+                ? 'Workout Ready'
+                : "Today's Exercises"}
+          </Text>
+          {(todaySplit?.exercises ?? []).length > 0 ? (
+            <View style={{ gap: 6 }}>
+              {todaySplit?.exercises.map((item, idx) => (
+                <Text key={item.id} style={styles.listItem}>
+                  {idx + 1}. {item.exercise?.name ?? 'Exercise'} • {item.target_sets} sets
+                </Text>
+              ))}
             </View>
+          ) : (
+            <Text style={styles.muted}>No split planned for today. You can still start and add exercises.</Text>
           )}
-        </>
+          <Pressable style={styles.primaryBtn} onPress={handleStartFlow}>
+            <Play size={18} color={Colors.primaryText} />
+            <Text style={styles.primaryBtnText}>
+              {session ? 'Continue / Start Workout' : 'Start Workout'}
+            </Text>
+          </Pressable>
+        </View>
       )}
 
-      {/* Add Exercise to Active Session Modal */}
-      <Modal visible={addModalOpen} animationType="slide" transparent>
+      {/* STAGE 1: PRE-WORKOUT WEIGHT */}
+      {stage === 'pre_weight' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>STEP 1 • PRE-WORKOUT WEIGHT</Text>
+          <Text style={styles.cardTitle}>Enter Pre-Workout Weight (kg)</Text>
+          <TextInput
+            style={styles.input}
+            keyboardType="decimal-pad"
+            placeholder="e.g. 79.8"
+            placeholderTextColor={Colors.textMuted}
+            value={preWeightInput}
+            onChangeText={setPreWeightInput}
+          />
+          <View style={styles.rowGap}>
+            <Pressable style={[styles.outlineBtn, { flex: 1 }]} onPress={() => handleSavePreWeight(true)}>
+              <Text style={styles.outlineBtnText}>Skip</Text>
+            </Pressable>
+            <Pressable style={[styles.primaryBtn, { flex: 2 }]} onPress={() => handleSavePreWeight(false)}>
+              <Text style={styles.primaryBtnText}>Save & Continue</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* STAGE 2: WARM-UP TICK + OPTIONAL PLANK/EXERCISE */}
+      {stage === 'pre_warmup' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>STEP 2 • WARM-UP</Text>
+          <Text style={styles.cardTitle}>Did you complete your warm-up?</Text>
+          <Pressable
+            style={[styles.checkRow, preWarmupDone && styles.checkRowActive]}
+            onPress={() => setPreWarmupDone((v) => !v)}
+          >
+            <View style={[styles.checkBox, preWarmupDone && styles.checkBoxActive]}>
+              {preWarmupDone && <Check size={14} color={Colors.primaryText} />}
+            </View>
+            <Text style={styles.checkLabel}>Yes, warm-up completed</Text>
+          </Pressable>
+
+          <Text style={styles.miniLabel}>Want to add Plank or another exercise first?</Text>
+          <View style={styles.rowGap}>
+            <TextInput
+              style={[styles.input, { flex: 1 }]}
+              placeholder="e.g. Plank"
+              placeholderTextColor={Colors.textMuted}
+              value={warmupExtraName}
+              onChangeText={setWarmupExtraName}
+            />
+            <Pressable
+              style={styles.outlineBtn}
+              onPress={async () => {
+                if (!warmupExtraName.trim()) return;
+                await handleAddExtraExerciseAndJump(warmupExtraName, true);
+                setWarmupExtraName('');
+              }}
+            >
+              <Plus size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Add</Text>
+            </Pressable>
+          </View>
+
+          <Pressable
+            style={styles.primaryBtn}
+            onPress={() => {
+              setCurrentExIdx(0);
+              setStage(sessionExercises.length > 0 ? 'exercises' : 'post_exercises_choice');
+            }}
+          >
+            <Text style={styles.primaryBtnText}>Start Exercises</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* STAGE 3: ACTIVE EXERCISE */}
+      {stage === 'exercises' && currentEx && (
+        <View style={{ gap: 14 }}>
+          {prevExSummary && prevExSummary.sets.length > 0 && (
+            <View style={styles.prevBanner}>
+              <Text style={styles.prevKicker}>
+                LAST SESSION ({formatReadableDate(prevExSummary.logDate).toUpperCase()})
+              </Text>
+              <View style={styles.prevSetsRow}>
+                {prevExSummary.sets.map((ps, idx) => (
+                  <View key={idx} style={styles.prevSetChip}>
+                    <Text style={styles.prevSetChipText}>
+                      S{idx + 1}: {formatSetDisplay(currentEx.exercise?.name, ps.weight_kg, ps.reps)}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          )}
+
+          <View style={styles.card}>
+            <Text style={styles.stepKicker}>
+              EXERCISE {currentExIdx + 1} OF {sessionExercises.length}
+            </Text>
+            <Text style={styles.exerciseTitle}>{currentEx.exercise?.name ?? 'Exercise'}</Text>
+
+            {/* Fixed Completed Sets */}
+            {currentExSets.map((s, idx) => (
+              <View key={s.id} style={styles.lockedSetRow}>
+                <Text style={styles.lockedSetText}>Set {idx + 1}</Text>
+                <Text style={styles.lockedSetVal}>
+                  {formatSetDisplay(currentEx.exercise?.name, Number(s.weight_kg), s.reps)} ✓
+                </Text>
+              </View>
+            ))}
+
+            {/* Current Set Input */}
+            <View style={styles.activeSetBox}>
+              <View style={styles.rowBetween}>
+                <Text style={styles.cardTitle}>Set {currentExSets.length + 1}</Text>
+                {currentExSets.length > 0 && (
+                  <Pressable style={styles.sameWeightBtn} onPress={handleSameWeight}>
+                    <Text style={styles.sameWeightText}>Same Weight</Text>
+                  </Pressable>
+                )}
+              </View>
+
+              <View style={styles.rowGap}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.miniLabel}>Repetitions</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="number-pad"
+                    placeholder="e.g. 15"
+                    placeholderTextColor={Colors.textMuted}
+                    value={repsInput}
+                    onChangeText={setRepsInput}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.miniLabel}>Weight (kg)</Text>
+                  <TextInput
+                    style={styles.input}
+                    keyboardType="decimal-pad"
+                    placeholder="e.g. 18"
+                    placeholderTextColor={Colors.textMuted}
+                    value={weightInput}
+                    onChangeText={setWeightInput}
+                  />
+                </View>
+              </View>
+
+              {isAdHocCurrent ? (
+                <View style={styles.rowGap}>
+                  <Pressable
+                    style={[styles.outlineBtn, { flex: 1 }]}
+                    onPress={() => void handleCompleteSet('next_set')}
+                  >
+                    <Plus size={15} color={Colors.primary} />
+                    <Text style={styles.outlineBtnText}>Next Set</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[styles.primaryBtn, { flex: 1 }]}
+                    onPress={() => void handleCompleteSet('next_exercise')}
+                  >
+                    <Text style={styles.primaryBtnText}>Next Exercise</Text>
+                  </Pressable>
+                </View>
+              ) : (
+                <Pressable
+                  style={styles.primaryBtn}
+                  onPress={() => void handleCompleteSet('auto')}
+                >
+                  <Check size={17} color={Colors.primaryText} />
+                  <Text style={styles.primaryBtnText}>
+                    Done Set {currentExSets.length + 1} / {plannedTargetSets}
+                  </Text>
+                </Pressable>
+              )}
+            </View>
+          </View>
+
+          {/* Up Next + Reorder/Add Modal Trigger */}
+          <View style={styles.card}>
+            <Text style={styles.miniLabel}>
+              {nextEx
+                ? `Up Next: ${nextEx.exercise?.name ?? 'Next Exercise'}`
+                : 'Last exercise in your list'}
+            </Text>
+            <Pressable
+              style={styles.outlineBtn}
+              onPress={() => {
+                setSwapSourceIdx(null);
+                setOrderModalOpen(true);
+              }}
+            >
+              <ArrowUpDown size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Change Order / Add Exercise</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* STAGE 4: ALL EXERCISES DONE -> NEW EXERCISE OR CARDIO/COOLDOWN */}
+      {stage === 'post_exercises_choice' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>ALL EXERCISES DONE</Text>
+          <Text style={styles.cardTitle}>Add another exercise or move to Cardio?</Text>
+          <View style={styles.rowGap}>
+            <TextInput
+              style={[styles.input, { flex: 1 }]}
+              placeholder="New exercise name..."
+              placeholderTextColor={Colors.textMuted}
+              value={postNewExName}
+              onChangeText={setPostNewExName}
+            />
+            <Pressable
+              style={styles.outlineBtn}
+              onPress={async () => {
+                if (!postNewExName.trim()) return;
+                await handleAddExtraExerciseAndJump(postNewExName, true);
+                setPostNewExName('');
+              }}
+            >
+              <Plus size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Add</Text>
+            </Pressable>
+          </View>
+          <Pressable style={styles.primaryBtn} onPress={() => setStage('cardio')}>
+            <Text style={styles.primaryBtnText}>Proceed to Cardio & Cool-down</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* STAGE 5: CARDIO TIMER */}
+      {stage === 'cardio' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>CARDIO TIMER</Text>
+          <Text style={styles.cardTitle}>What cardio are you doing?</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. Walking, Cycling, Treadmill"
+            placeholderTextColor={Colors.textMuted}
+            value={cardioName}
+            onChangeText={setCardioName}
+          />
+
+          <Text style={styles.timerDisplay}>{formatTimer(cardioSeconds)}</Text>
+
+          <View style={styles.rowGap}>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => setCardioRunning((r) => !r)}
+            >
+              {cardioRunning ? (
+                <Pause size={16} color={Colors.primary} />
+              ) : (
+                <Play size={16} color={Colors.primary} />
+              )}
+              <Text style={styles.outlineBtnText}>{cardioRunning ? 'Pause' : 'Start'}</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => {
+                setCardioRunning(false);
+                setCardioSeconds(0);
+              }}
+            >
+              <RotateCcw size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Restart</Text>
+            </Pressable>
+          </View>
+
+          {loggedCardios.length > 0 && (
+            <View style={{ gap: 4 }}>
+              {loggedCardios.map((c, idx) => (
+                <Text key={idx} style={styles.muted}>
+                  ✓ {c.name}: {c.mins} min
+                </Text>
+              ))}
+            </View>
+          )}
+
+          <View style={styles.rowGap}>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => void handleAddCardioEntry(false)}
+            >
+              <Plus size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Add Next Cardio</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryBtn, { flex: 1 }]}
+              onPress={() => void handleAddCardioEntry(true)}
+            >
+              <Square size={15} color={Colors.primaryText} />
+              <Text style={styles.primaryBtnText}>Submit & Next</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* STAGE 6: POST-WORKOUT WEIGHT */}
+      {stage === 'post_weight' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>POST-WORKOUT WEIGHT</Text>
+          <Text style={styles.cardTitle}>Take & Enter Post-Workout Weight (kg)</Text>
+          <TextInput
+            style={styles.input}
+            keyboardType="decimal-pad"
+            placeholder="e.g. 79.4"
+            placeholderTextColor={Colors.textMuted}
+            value={postWeightInput}
+            onChangeText={setPostWeightInput}
+          />
+          <View style={styles.rowGap}>
+            <Pressable style={[styles.outlineBtn, { flex: 1 }]} onPress={() => handleSavePostWeight(true)}>
+              <Text style={styles.outlineBtnText}>Skip</Text>
+            </Pressable>
+            <Pressable style={[styles.primaryBtn, { flex: 2 }]} onPress={() => handleSavePostWeight(false)}>
+              <Text style={styles.primaryBtnText}>Save Weight & Continue</Text>
+            </Pressable>
+          </View>
+        </View>
+      )}
+
+      {/* STAGE 7: COOL-DOWN / WARM-UP TICK + PHOTO + FINISH */}
+      {stage === 'cooldown_photo' && (
+        <View style={styles.card}>
+          <Text style={styles.stepKicker}>FINAL STEP • COOL-DOWN & PHOTO</Text>
+          <Text style={styles.cardTitle}>Cool-down & Progress Photo</Text>
+
+          <Pressable
+            style={[styles.checkRow, postWarmupDone && styles.checkRowActive]}
+            onPress={() => setPostWarmupDone((v) => !v)}
+          >
+            <View style={[styles.checkBox, postWarmupDone && styles.checkBoxActive]}>
+              {postWarmupDone && <Check size={14} color={Colors.primaryText} />}
+            </View>
+            <Text style={styles.checkLabel}>Post-workout warm-up / stretching done</Text>
+          </Pressable>
+
+          <View style={styles.rowGap}>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => handlePickPhoto(true)}
+              disabled={uploadingPhoto}
+            >
+              <Camera size={16} color={Colors.primary} />
+              <Text style={styles.outlineBtnText}>Take Photo</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.outlineBtn, { flex: 1 }]}
+              onPress={() => handlePickPhoto(false)}
+              disabled={uploadingPhoto}
+            >
+              <Text style={styles.outlineBtnText}>Gallery ({todayPhotos.length})</Text>
+            </Pressable>
+          </View>
+          {uploadingPhoto && <ActivityIndicator size="small" color={Colors.amber} />}
+
+          <Pressable style={styles.primaryBtn} onPress={handleFinishAll}>
+            <CheckCircle2 size={18} color={Colors.primaryText} />
+            <Text style={styles.primaryBtnText}>Finish & Save Workout</Text>
+          </Pressable>
+        </View>
+      )}
+
+      {/* REORDER & ADD EXERCISE MODAL */}
+      <Modal visible={orderModalOpen} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>Add Exercise to Session</Text>
-              <Pressable onPress={() => setAddModalOpen(false)}>
-                <X size={22} color={Colors.textSecondary} />
+              <Text style={styles.cardTitle}>Reorder / Add Exercises</Text>
+              <Pressable onPress={() => setOrderModalOpen(false)}>
+                <X size={20} color={Colors.textSecondary} />
               </Pressable>
             </View>
-            <TextInput
-              style={styles.input}
-              placeholder="Search exercise..."
-              placeholderTextColor={Colors.textMuted}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
-            <ScrollView style={{ maxHeight: 360 }}>
-              {filteredAddExercises.map((ex) => (
-                <Pressable
-                  key={ex.id}
-                  style={styles.pickerRow}
-                  onPress={async () => {
-                    await addExerciseToSession(ex);
-                    setExpandedExerciseId(ex.id);
-                    setAddModalOpen(false);
-                  }}
-                >
-                  <View>
-                    <Text style={styles.exerciseName}>{ex.name}</Text>
-                    <Text style={styles.exerciseSub}>
-                      {ex.primary_muscle} • {ex.equipment}
+            <Text style={styles.muted}>
+              Tap an exercise to pick it up, then tap another position to swap — or use arrows.
+            </Text>
+
+            <ScrollView style={{ maxHeight: 320 }} contentContainerStyle={{ gap: 8 }}>
+              {sessionExercises.map((se, idx) => {
+                const isSelected = swapSourceIdx === idx;
+                return (
+                  <Pressable
+                    key={se.id}
+                    style={[styles.orderRow, isSelected && styles.orderRowSelected]}
+                    onPress={() => {
+                      if (swapSourceIdx === null) {
+                        setSwapSourceIdx(idx);
+                      } else {
+                        void handleSwapOrMove(swapSourceIdx, idx);
+                      }
+                    }}
+                  >
+                    <Text style={styles.orderRowText}>
+                      {idx + 1}. {se.exercise?.name ?? 'Exercise'}
                     </Text>
-                  </View>
-                  <Plus size={18} color={Colors.primary} />
-                </Pressable>
-              ))}
+                    <View style={styles.rowGapSmall}>
+                      <Pressable onPress={() => void handleSwapOrMove(idx, idx - 1)}>
+                        <ArrowUp size={16} color={Colors.textSecondary} />
+                      </Pressable>
+                      <Pressable onPress={() => void handleSwapOrMove(idx, idx + 1)}>
+                        <ArrowDown size={16} color={Colors.textSecondary} />
+                      </Pressable>
+                    </View>
+                  </Pressable>
+                );
+              })}
             </ScrollView>
+
+            <View style={styles.rowGap}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder="Type new exercise name..."
+                placeholderTextColor={Colors.textMuted}
+                value={newExName}
+                onChangeText={setNewExName}
+              />
+              <Pressable
+                style={styles.outlineBtn}
+                onPress={async () => {
+                  if (!newExName.trim()) return;
+                  const added = await addExerciseByName(newExName);
+                  if (added) {
+                    setAdHocMap((prev) => ({ ...prev, [added.exercise_id]: true }));
+                  }
+                  setNewExName('');
+                }}
+              >
+                <Plus size={16} color={Colors.primary} />
+                <Text style={styles.outlineBtnText}>Add</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -551,20 +878,21 @@ export default function WorkoutScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.bg },
   content: { padding: 16, gap: 14, paddingBottom: 40 },
-  headerRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  dayLabel: { color: Colors.gold, fontSize: 11, fontWeight: '700', letterSpacing: 1.2, textTransform: 'uppercase' },
-  title: { color: Colors.text, fontSize: 22, fontWeight: '800', marginTop: 2 },
-  outlineBtn: {
+  topHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    justifyContent: 'space-between',
+  },
+  dayLabel: { color: Colors.primary, fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  title: { color: Colors.text, fontSize: 22, fontWeight: '800', marginTop: 2 },
+  overlayBtn: {
     borderWidth: 1,
     borderColor: Colors.primary,
     borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
   },
-  outlineBtnText: { color: Colors.primary, fontWeight: '600', fontSize: 13 },
+  overlayBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
   card: {
     backgroundColor: Colors.surface,
     borderRadius: 16,
@@ -573,132 +901,118 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     gap: 12,
   },
+  stepKicker: { color: Colors.gold, fontSize: 11, fontWeight: '800', letterSpacing: 1.1 },
   cardTitle: { color: Colors.text, fontSize: 16, fontWeight: '700' },
-  sweatBadge: { color: Colors.amber, fontSize: 12, fontWeight: '600' },
-  mutedText: { color: Colors.textSecondary, fontSize: 13, lineHeight: 19 },
-  rowBetween: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  rowGap: { flexDirection: 'row', gap: 10 },
-  rowGapSmall: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  exerciseTitle: { color: Colors.text, fontSize: 22, fontWeight: '800' },
+  listItem: { color: Colors.textSecondary, fontSize: 14 },
+  muted: { color: Colors.textSecondary, fontSize: 13 },
   miniLabel: { color: Colors.textSecondary, fontSize: 12, marginBottom: 4 },
-  inlineInputRow: { flexDirection: 'row', gap: 6, alignItems: 'center' },
   input: {
     backgroundColor: Colors.bg,
     color: Colors.text,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
   },
-  miniSaveBtn: {
-    backgroundColor: Colors.surfaceElevated,
-    borderRadius: 8,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  miniSaveText: { color: Colors.primary, fontSize: 12, fontWeight: '600' },
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowGap: { flexDirection: 'row', gap: 10, alignItems: 'center' },
+  rowGapSmall: { flexDirection: 'row', gap: 10, alignItems: 'center' },
   primaryBtn: {
     backgroundColor: Colors.primary,
     borderRadius: 12,
-    paddingVertical: 12,
+    paddingVertical: 13,
+    paddingHorizontal: 16,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
   },
-  primaryBtnText: { color: Colors.primaryText, fontWeight: '700', fontSize: 14 },
-  sectionHeader: { color: Colors.textSecondary, fontSize: 13, fontWeight: '700' },
-  linkBtn: { flexDirection: 'row', alignItems: 'center', gap: 4 },
-  linkBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '600' },
-  exerciseCard: {
-    backgroundColor: Colors.surface,
-    borderRadius: 16,
-    padding: 14,
+  primaryBtnText: { color: Colors.primaryText, fontSize: 14, fontWeight: '800' },
+  outlineBtn: {
     borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  exerciseCardExpanded: {
     borderColor: Colors.primary,
-  },
-  exerciseName: { color: Colors.text, fontSize: 15, fontWeight: '700' },
-  exerciseSub: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
-  statusBadge: {
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 8,
+    justifyContent: 'center',
+    gap: 6,
   },
-  statusText: { fontSize: 11, fontWeight: '700' },
-  expandedBody: { marginTop: 14, gap: 10, borderTopWidth: 1, borderTopColor: Colors.border, paddingTop: 12 },
-  setRow: {
+  outlineBtnText: { color: Colors.primary, fontSize: 13, fontWeight: '700' },
+  checkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: Colors.bg,
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 10,
-  },
-  setNum: { color: Colors.textMuted, fontWeight: '700', width: 26 },
-  setWeight: { color: Colors.text, fontWeight: '700', fontSize: 14, flex: 1 },
-  tagPill: {
-    backgroundColor: Colors.surfaceElevated,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginRight: 6,
-  },
-  tagText: { color: Colors.textSecondary, fontSize: 11, textTransform: 'capitalize' },
-  loggerBox: { gap: 10, marginTop: 4 },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
-  chip: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 8,
+    gap: 10,
+    padding: 12,
+    borderRadius: 12,
     backgroundColor: Colors.bg,
     borderWidth: 1,
     borderColor: Colors.border,
   },
-  chipActive: { backgroundColor: Colors.primarySoft, borderColor: Colors.primary },
-  chipText: { color: Colors.textSecondary, fontSize: 12 },
-  chipTextActive: { color: Colors.primary, fontWeight: '700' },
-  doneBtn: {
-    flexDirection: 'row',
+  checkRowActive: {
+    borderColor: Colors.success,
+    backgroundColor: Colors.successSoft,
+  },
+  checkBox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: Colors.textMuted,
     alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 14,
-    borderRadius: 12,
+    justifyContent: 'center',
+  },
+  checkBoxActive: {
+    backgroundColor: Colors.success,
+    borderColor: Colors.success,
+  },
+  checkLabel: { color: Colors.text, fontSize: 14, fontWeight: '600' },
+  lockedSetRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 10,
     backgroundColor: Colors.successSoft,
     borderWidth: 1,
     borderColor: Colors.success,
   },
-  doneBtnText: { color: Colors.success, fontWeight: '700', fontSize: 13 },
-  finishBtn: {
-    backgroundColor: Colors.success,
+  lockedSetText: { color: Colors.text, fontSize: 13, fontWeight: '700' },
+  lockedSetVal: { color: Colors.success, fontSize: 13, fontWeight: '700' },
+  activeSetBox: {
+    backgroundColor: Colors.bg,
     borderRadius: 12,
-    paddingVertical: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    marginTop: 6,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    gap: 10,
   },
-  completedBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: Colors.successSoft,
-    padding: 14,
-    borderRadius: 12,
+  sameWeightBtn: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: Colors.goldSoft,
+    borderWidth: 1,
+    borderColor: Colors.gold,
   },
-  completedText: { color: Colors.success, fontWeight: '700', fontSize: 14 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end' },
+  sameWeightText: { color: Colors.gold, fontSize: 12, fontWeight: '700' },
+  timerDisplay: {
+    color: Colors.text,
+    fontSize: 42,
+    fontWeight: '800',
+    textAlign: 'center',
+    fontVariant: ['tabular-nums'],
+    paddingVertical: 8,
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    justifyContent: 'flex-end',
+  },
   modalCard: {
     backgroundColor: Colors.surface,
     borderTopLeftRadius: 20,
@@ -706,12 +1020,52 @@ const styles = StyleSheet.create({
     padding: 20,
     gap: 12,
   },
-  pickerRow: {
+  orderRow: {
     flexDirection: 'row',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.border,
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 10,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  orderRowSelected: {
+    borderColor: Colors.gold,
+    backgroundColor: Colors.goldSoft,
+  },
+  orderRowText: { color: Colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  prevBanner: {
+    backgroundColor: Colors.goldSoft,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.goldBorder,
+    gap: 8,
+  },
+  prevKicker: {
+    color: Colors.gold,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.9,
+  },
+  prevSetsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  prevSetChip: {
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  prevSetChipText: {
+    color: Colors.text,
+    fontSize: 12,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
 });

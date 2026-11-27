@@ -1,22 +1,99 @@
-import React, { useMemo } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
+import { FlatList, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Calendar, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { addDays, formatReadableDate, useSelectedDate } from '../context/DateContext';
 import { getTodayDateString } from '../lib/storage';
 import { Colors } from '../theme/colors';
 
+const ITEM_WIDTH = 52;
+const ITEM_GAP = 8;
+const ITEM_STRIDE = ITEM_WIDTH + ITEM_GAP;
+const DAYS_BEFORE_TODAY = 90;
+const DAYS_AFTER_TODAY = 14;
+
 export function DateStrip() {
   const { selectedDate, setSelectedDate, shiftDate, resetToToday, isToday } =
     useSelectedDate();
   const today = getTodayDateString();
+  const listRef = useRef<FlatList<string>>(null);
 
   const days = useMemo(() => {
+    const start = addDays(today, -DAYS_BEFORE_TODAY);
+    const end = addDays(today, DAYS_AFTER_TODAY);
+    // Expand range if user navigates beyond default window via arrows
+    const effectiveStart = selectedDate < start ? addDays(selectedDate, -14) : start;
+    const effectiveEnd = selectedDate > end ? addDays(selectedDate, 14) : end;
+
     const list: string[] = [];
-    for (let i = -6; i <= 0; i++) {
-      list.push(addDays(today, i));
+    let cursor = effectiveStart;
+    while (cursor <= effectiveEnd) {
+      list.push(cursor);
+      cursor = addDays(cursor, 1);
     }
     return list;
-  }, [today]);
+  }, [today, selectedDate]);
+
+  const selectedIndex = useMemo(() => {
+    const idx = days.indexOf(selectedDate);
+    return idx >= 0 ? idx : days.indexOf(today);
+  }, [days, selectedDate, today]);
+
+  const selectedMonthLabel = useMemo(() => {
+    const [y, m, d] = selectedDate.split('-').map((n) => parseInt(n, 10));
+    return new Date(y, m - 1, d).toLocaleDateString('en-US', {
+      month: 'short',
+      year: 'numeric',
+    });
+  }, [selectedDate]);
+
+  useEffect(() => {
+    if (selectedIndex < 0 || !listRef.current) return;
+    const timer = setTimeout(() => {
+      listRef.current?.scrollToIndex({
+        index: selectedIndex,
+        animated: true,
+        viewPosition: 0.5,
+      });
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [selectedIndex]);
+
+  const getItemLayout = useCallback(
+    (_data: ArrayLike<string> | null | undefined, index: number) => ({
+      length: ITEM_WIDTH,
+      offset: ITEM_STRIDE * index,
+      index,
+    }),
+    []
+  );
+
+  const renderDay = useCallback(
+    ({ item: dateStr }: { item: string }) => {
+      const active = dateStr === selectedDate;
+      const isCurrentToday = dateStr === today;
+      const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
+      const dt = new Date(y, m - 1, d);
+      const weekday = dt.toLocaleDateString('en-US', { weekday: 'short' });
+      const monthShort =
+        d === 1 ? dt.toLocaleDateString('en-US', { month: 'short' }) : null;
+
+      return (
+        <Pressable
+          style={[styles.dayCard, active && styles.dayCardActive]}
+          onPress={() => setSelectedDate(dateStr)}
+        >
+          <Text style={[styles.weekday, active && styles.weekdayActive]}>
+            {monthShort ?? weekday}
+          </Text>
+          <Text style={[styles.dayNum, active && styles.dayNumActive]}>{d}</Text>
+          {isCurrentToday && (
+            <View style={[styles.todayDot, active && styles.todayDotActive]} />
+          )}
+        </Pressable>
+      );
+    },
+    [selectedDate, setSelectedDate, today]
+  );
 
   return (
     <View style={styles.wrapper}>
@@ -28,7 +105,7 @@ export function DateStrip() {
         <View style={styles.centerLabel}>
           <Calendar size={14} color={Colors.gold} />
           <Text style={styles.dateTitle}>{formatReadableDate(selectedDate)}</Text>
-          <Text style={styles.dateIso}>{selectedDate}</Text>
+          <Text style={styles.dateIso}>{selectedMonthLabel}</Text>
         </View>
 
         <View style={styles.rightControls}>
@@ -43,29 +120,24 @@ export function DateStrip() {
         </View>
       </View>
 
-      <ScrollView
+      <FlatList
+        ref={listRef}
+        data={days}
+        keyExtractor={(item) => item}
         horizontal
         showsHorizontalScrollIndicator={false}
+        getItemLayout={getItemLayout}
+        initialScrollIndex={Math.max(0, selectedIndex)}
         contentContainerStyle={styles.stripContent}
-      >
-        {days.map((dateStr) => {
-          const active = dateStr === selectedDate;
-          const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
-          const dt = new Date(y, m - 1, d);
-          const weekday = dt.toLocaleDateString('en-US', { weekday: 'short' });
-          const dayNum = d;
-          return (
-            <Pressable
-              key={dateStr}
-              style={[styles.dayCard, active && styles.dayCardActive]}
-              onPress={() => setSelectedDate(dateStr)}
-            >
-              <Text style={[styles.weekday, active && styles.weekdayActive]}>{weekday}</Text>
-              <Text style={[styles.dayNum, active && styles.dayNumActive]}>{dayNum}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
+        ItemSeparatorComponent={() => <View style={{ width: ITEM_GAP }} />}
+        onScrollToIndexFailed={(info) => {
+          listRef.current?.scrollToOffset({
+            offset: info.index * ITEM_STRIDE,
+            animated: true,
+          });
+        }}
+        renderItem={renderDay}
+      />
     </View>
   );
 }
@@ -129,10 +201,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   stripContent: {
-    gap: 8,
+    paddingHorizontal: 2,
   },
   dayCard: {
-    width: 46,
+    width: ITEM_WIDTH,
     paddingVertical: 8,
     borderRadius: 12,
     backgroundColor: Colors.bg,
@@ -162,5 +234,15 @@ const styles = StyleSheet.create({
   },
   dayNumActive: {
     color: Colors.text,
+  },
+  todayDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: Colors.gold,
+    marginTop: 1,
+  },
+  todayDotActive: {
+    backgroundColor: Colors.text,
   },
 });

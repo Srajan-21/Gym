@@ -13,7 +13,9 @@ import { Bookmark, Calculator, Flame, Settings, Trash2, X } from 'lucide-react-n
 import { DateStrip } from '../../components/DateStrip';
 import { MessLoggerModal } from '../../components/MessLoggerModal';
 import { RecipeBuilderModal } from '../../components/RecipeBuilderModal';
-import { useDiet } from '../../hooks/useDiet';
+import { addDays, formatReadableDate, useSelectedDate } from '../../context/DateContext';
+import { TargetScope, useDiet } from '../../hooks/useDiet';
+import { getTodayDateString } from '../../lib/storage';
 import { Colors } from '../../theme/colors';
 import { GoalMode, MealSlot } from '../../types/database';
 
@@ -27,13 +29,25 @@ const MEAL_SLOTS: { key: MealSlot; label: string }[] = [
 ];
 
 const GOAL_MODES: GoalMode[] = ['cut', 'recomp', 'maintain', 'bulk'];
+const TARGET_SCOPES: { key: TargetScope; label: string }[] = [
+  { key: 'day', label: 'This Day' },
+  { key: 'week', label: 'This Week' },
+  { key: 'month', label: 'This Month' },
+  { key: 'default', label: 'Default' },
+];
 
 export default function DietScreen() {
+  const { selectedDate } = useSelectedDate();
   const {
     ingredients,
     savedMeals,
     foodLogs,
     goals,
+    defaultGoals,
+    activeTargetScope,
+    scopedTargets,
+    weekKey,
+    monthKey,
     dailyTotals,
     logFoodEntry,
     deleteFoodLog,
@@ -41,6 +55,7 @@ export default function DietScreen() {
     deleteSavedMeal,
     createCustomIngredient,
     updateMacroGoals,
+    clearScopedTarget,
   } = useDiet();
 
   const [activeSlot, setActiveSlot] = useState<MealSlot>('lunch');
@@ -48,43 +63,95 @@ export default function DietScreen() {
   const [messOpen, setMessOpen] = useState(false);
   const [goalsOpen, setGoalsOpen] = useState(false);
 
+  const [targetScope, setTargetScope] = useState<TargetScope>('day');
   const [goalMode, setGoalMode] = useState<GoalMode>(goals.goal_mode);
   const [calTarget, setCalTarget] = useState(String(goals.target_calories));
   const [proTarget, setProTarget] = useState(String(goals.target_protein_g));
   const [carbTarget, setCarbTarget] = useState(String(goals.target_carbs_g));
   const [fatTarget, setFatTarget] = useState(String(goals.target_fat_g));
 
+  const getScopeSource = (scope: TargetScope) => {
+    if (scope === 'day') return scopedTargets.day[selectedDate] ?? goals;
+    if (scope === 'week') return scopedTargets.week[weekKey] ?? goals;
+    if (scope === 'month') return scopedTargets.month[monthKey] ?? goals;
+    return defaultGoals;
+  };
+
+  const applyScopeFields = (scope: TargetScope) => {
+    const src = getScopeSource(scope);
+    setTargetScope(scope);
+    setGoalMode(src.goal_mode);
+    setCalTarget(String(src.target_calories));
+    setProTarget(String(src.target_protein_g));
+    setCarbTarget(String(src.target_carbs_g));
+    setFatTarget(String(src.target_fat_g));
+  };
+
   const openGoalsModal = () => {
-    setGoalMode(goals.goal_mode);
-    setCalTarget(String(goals.target_calories));
-    setProTarget(String(goals.target_protein_g));
-    setCarbTarget(String(goals.target_carbs_g));
-    setFatTarget(String(goals.target_fat_g));
+    applyScopeFields(activeTargetScope);
     setGoalsOpen(true);
   };
 
   const handleSaveGoals = async () => {
-    await updateMacroGoals({
-      goal_mode: goalMode,
-      target_calories: parseInt(calTarget, 10) || 2200,
-      target_protein_g: parseInt(proTarget, 10) || 150,
-      target_carbs_g: parseInt(carbTarget, 10) || 220,
-      target_fat_g: parseInt(fatTarget, 10) || 65,
-    });
+    await updateMacroGoals(
+      {
+        goal_mode: goalMode,
+        target_calories: parseInt(calTarget, 10) || 2200,
+        target_protein_g: parseInt(proTarget, 10) || 150,
+        target_carbs_g: parseInt(carbTarget, 10) || 220,
+        target_fat_g: parseInt(fatTarget, 10) || 65,
+      },
+      targetScope
+    );
     setGoalsOpen(false);
   };
 
+  const scopeHint =
+    targetScope === 'day'
+      ? `${formatReadableDate(selectedDate)} (${selectedDate})`
+      : targetScope === 'week'
+        ? `Week: ${weekKey} to ${addDays(weekKey, 6)}`
+        : targetScope === 'month'
+          ? `Month: ${monthKey}`
+          : 'Fallback for all days without a custom target';
+
+  const scopeBadgeLabel =
+    activeTargetScope === 'day'
+      ? 'DAY TARGET'
+      : activeTargetScope === 'week'
+        ? 'WEEK TARGET'
+        : activeTargetScope === 'month'
+          ? 'MONTH TARGET'
+          : 'DEFAULT TARGET';
+
   const pct = (val: number, max: number) => `${Math.min(100, Math.round((val / Math.max(1, max)) * 100))}%` as const;
+
+  const isPastDate = selectedDate < getTodayDateString();
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <DateStrip />
 
+      {isPastDate && (
+        <View style={styles.pastBanner}>
+          <Text style={styles.pastKicker}>
+            PAST DATE • {formatReadableDate(selectedDate).toUpperCase()}
+          </Text>
+          <Text style={styles.pastText}>
+            {foodLogs.length === 0
+              ? `No meals logged for ${formatReadableDate(selectedDate)}. Fill in what you ate using the tools below.`
+              : `Viewing past meals for ${formatReadableDate(selectedDate)}. You can add or remove entries below.`}
+          </Text>
+        </View>
+      )}
+
       {/* Macro Progress Card */}
       <View style={styles.card}>
         <View style={styles.rowBetween}>
           <View>
-            <Text style={styles.kicker}>{goals.goal_mode.toUpperCase()} MODE</Text>
+            <Text style={styles.kicker}>
+              {goals.goal_mode.toUpperCase()} MODE • {scopeBadgeLabel}
+            </Text>
             <Text style={styles.calHeadline}>
               {dailyTotals.calories}{' '}
               <Text style={styles.calTarget}>/ {goals.target_calories} kcal</Text>
@@ -276,11 +343,25 @@ export default function DietScreen() {
         <View style={styles.overlay}>
           <View style={styles.modalCard}>
             <View style={styles.rowBetween}>
-              <Text style={styles.cardTitle}>Daily Macro Targets</Text>
+              <Text style={styles.cardTitle}>Calorie & Macro Targets</Text>
               <Pressable onPress={() => setGoalsOpen(false)}>
                 <X size={20} color={Colors.textSecondary} />
               </Pressable>
             </View>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8 }}>
+              {TARGET_SCOPES.map((s) => (
+                <Pressable
+                  key={s.key}
+                  style={[styles.slotPill, targetScope === s.key && styles.slotPillActive]}
+                  onPress={() => applyScopeFields(s.key)}
+                >
+                  <Text style={[styles.slotText, targetScope === s.key && styles.slotTextActive]}>
+                    {s.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+            <Text style={styles.scopeHintText}>{scopeHint}</Text>
             <View style={styles.rowGap}>
               {GOAL_MODES.map((m) => (
                 <Pressable
@@ -317,6 +398,20 @@ export default function DietScreen() {
             <Pressable style={styles.saveGoalsBtn} onPress={handleSaveGoals}>
               <Text style={[styles.actionText, { color: Colors.primaryText }]}>Save Targets</Text>
             </Pressable>
+            {targetScope !== 'default' &&
+              ((targetScope === 'day' && Boolean(scopedTargets.day[selectedDate])) ||
+                (targetScope === 'week' && Boolean(scopedTargets.week[weekKey])) ||
+                (targetScope === 'month' && Boolean(scopedTargets.month[monthKey]))) && (
+                <Pressable
+                  style={styles.clearScopeBtn}
+                  onPress={async () => {
+                    await clearScopedTarget(targetScope);
+                    setGoalsOpen(false);
+                  }}
+                >
+                  <Text style={styles.clearScopeText}>Reset {targetScope} override</Text>
+                </Pressable>
+              )}
           </View>
         </View>
       </Modal>
@@ -425,5 +520,40 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     alignItems: 'center',
     marginTop: 4,
+  },
+  scopeHintText: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+  },
+  clearScopeBtn: {
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  clearScopeText: {
+    color: Colors.danger,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  pastBanner: {
+    backgroundColor: Colors.amberSoft,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: Colors.amber,
+    gap: 4,
+  },
+  pastKicker: {
+    color: Colors.amber,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  pastText: {
+    color: Colors.text,
+    fontSize: 12,
+    lineHeight: 17,
   },
 });

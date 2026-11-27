@@ -10,6 +10,7 @@ export function useDailyHabits() {
   const { user } = useAuth();
   const { selectedDate: today } = useSelectedDate();
   const cacheKey = `gym_daily_log_${today}_v1`;
+  const photosCacheKey = `gym_daily_photos_${today}_v1`;
 
   const [dailyLog, setDailyLog] = useState<DailyLog | null>(null);
   const [todayPhotos, setTodayPhotos] = useState<ProgressPhoto[]>([]);
@@ -17,8 +18,12 @@ export function useDailyHabits() {
 
   const loadHabits = useCallback(async () => {
     if (!user) return;
-    const cached = await getCachedJson<DailyLog>(cacheKey);
-    if (cached) setDailyLog(cached);
+    const [cached, cachedPhotos] = await Promise.all([
+      getCachedJson<DailyLog | null>(cacheKey),
+      getCachedJson<ProgressPhoto[]>(photosCacheKey),
+    ]);
+    setDailyLog(cached ?? null);
+    setTodayPhotos(cachedPhotos ?? []);
 
     try {
       const [{ data: logData }, { data: photoData }] = await Promise.all([
@@ -36,17 +41,19 @@ export function useDailyHabits() {
           .order('created_at', { ascending: false }),
       ]);
 
-      if (logData) {
-        setDailyLog(logData as DailyLog);
-        setCachedJson(cacheKey, logData);
-      }
+      const nextLog = (logData as DailyLog | null) ?? null;
+      setDailyLog(nextLog);
+      setCachedJson(cacheKey, nextLog);
+
       if (photoData) {
-        setTodayPhotos(photoData as ProgressPhoto[]);
+        const nextPhotos = photoData as ProgressPhoto[];
+        setTodayPhotos(nextPhotos);
+        setCachedJson(photosCacheKey, nextPhotos);
       }
     } catch {
       // Offline fallback to cache
     }
-  }, [cacheKey, today, user]);
+  }, [cacheKey, photosCacheKey, today, user]);
 
   useEffect(() => {
     void (async () => {
@@ -96,11 +103,14 @@ export function useDailyHabits() {
     });
   };
 
-  /**
-   * Accepts HH:MM (24h) strings for bedTime and wakeTime.
-   * If bedTime >= wakeTime (e.g. 23:30 -> 07:00), bedTime is treated as yesterday.
-   */
-  const saveSleep = async (bedHHMM: string, wakeHHMM: string) => {
+  const saveWeight = async (preKg: number | null, postKg: number | null) => {
+    await upsertFields({
+      weight_pre_kg: preKg,
+      weight_post_kg: postKg,
+    });
+  };
+
+  const buildSleepTimestamps = (bedHHMM: string, wakeHHMM: string) => {
     const [bH, bM] = bedHHMM.split(':').map((n) => parseInt(n, 10));
     const [wH, wM] = wakeHHMM.split(':').map((n) => parseInt(n, 10));
     if ([bH, bM, wH, wM].some((n) => Number.isNaN(n))) {
@@ -116,10 +126,49 @@ export function useDailyHabits() {
       sleepDate.setDate(sleepDate.getDate() - 1);
     }
 
-    await upsertFields({
+    return {
       sleep_time: sleepDate.toISOString(),
       wake_time: wakeDate.toISOString(),
-    });
+    };
+  };
+
+  /**
+   * Accepts HH:MM (24h) strings for bedTime and wakeTime.
+   * If bedTime >= wakeTime (e.g. 23:30 -> 07:00), bedTime is treated as yesterday.
+   */
+  const saveSleep = async (bedHHMM: string, wakeHHMM: string) => {
+    await upsertFields(buildSleepTimestamps(bedHHMM, wakeHHMM));
+  };
+
+  const saveBulkDayHabits = async (params: {
+    waterGlasses?: number | null;
+    treadmillSteps?: number | null;
+    otherSteps?: number | null;
+    preWeightKg?: number | null;
+    postWeightKg?: number | null;
+    bedHHMM?: string;
+    wakeHHMM?: string;
+  }) => {
+    const fields: Partial<DailyLog> = {};
+    if (params.waterGlasses !== undefined && params.waterGlasses !== null) {
+      fields.water_glasses = Math.max(0, params.waterGlasses);
+    }
+    if (params.treadmillSteps !== undefined && params.treadmillSteps !== null) {
+      fields.steps_treadmill = Math.max(0, params.treadmillSteps);
+    }
+    if (params.otherSteps !== undefined && params.otherSteps !== null) {
+      fields.steps_other = Math.max(0, params.otherSteps);
+    }
+    if (params.preWeightKg !== undefined) {
+      fields.weight_pre_kg = params.preWeightKg;
+    }
+    if (params.postWeightKg !== undefined) {
+      fields.weight_post_kg = params.postWeightKg;
+    }
+    if (params.bedHHMM?.trim() && params.wakeHHMM?.trim()) {
+      Object.assign(fields, buildSleepTimestamps(params.bedHHMM.trim(), params.wakeHHMM.trim()));
+    }
+    await upsertFields(fields);
   };
 
   const addProgressPhoto = async (localUri: string, poseTag: PoseTag) => {
@@ -140,7 +189,11 @@ export function useDailyHabits() {
         .single();
 
       if (error) throw error;
-      setTodayPhotos((prev) => [data as ProgressPhoto, ...prev]);
+      setTodayPhotos((prev) => {
+        const next = [data as ProgressPhoto, ...prev];
+        setCachedJson(photosCacheKey, next);
+        return next;
+      });
     } finally {
       setUploadingPhoto(false);
     }
@@ -154,7 +207,9 @@ export function useDailyHabits() {
     refresh: loadHabits,
     adjustWater,
     saveSteps,
+    saveWeight,
     saveSleep,
+    saveBulkDayHabits,
     addProgressPhoto,
   };
 }

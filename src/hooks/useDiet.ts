@@ -21,9 +21,43 @@ export interface RecipeDraftItem {
   grams: number;
 }
 
+export type TargetScope = 'day' | 'week' | 'month' | 'default';
+
+export interface ScopedMacroTarget {
+  goal_mode: GoalMode;
+  target_calories: number;
+  target_protein_g: number;
+  target_carbs_g: number;
+  target_fat_g: number;
+}
+
+export interface ScopedTargetsMap {
+  day: Record<string, ScopedMacroTarget>;
+  week: Record<string, ScopedMacroTarget>;
+  month: Record<string, ScopedMacroTarget>;
+}
+
+const EMPTY_SCOPED_TARGETS: ScopedTargetsMap = { day: {}, week: {}, month: {} };
+
+export function getWeekKey(dateStr: string): string {
+  const [y, m, d] = dateStr.split('-').map((n) => parseInt(n, 10));
+  const dt = new Date(y, m - 1, d);
+  const day = dt.getDay();
+  const diffToMon = day === 0 ? -6 : 1 - day;
+  dt.setDate(dt.getDate() + diffToMon);
+  const yy = dt.getFullYear();
+  const mm = String(dt.getMonth() + 1).padStart(2, '0');
+  const dd = String(dt.getDate()).padStart(2, '0');
+  return `${yy}-${mm}-${dd}`;
+}
+
+export function getMonthKey(dateStr: string): string {
+  return dateStr.slice(0, 7);
+}
+
 const DEFAULT_GOALS: Omit<UserGoals, 'id' | 'user_id' | 'updated_at'> = {
   goal_mode: 'recomp',
-  target_calories: 2200,
+  target_calories: 1850,
   target_protein_g: 150,
   target_carbs_g: 220,
   target_fat_g: 65,
@@ -34,11 +68,15 @@ const DEFAULT_GOALS: Omit<UserGoals, 'id' | 'user_id' | 'updated_at'> = {
 export function useDiet() {
   const { user } = useAuth();
   const { selectedDate: today } = useSelectedDate();
+  const scopedCacheKey = user ? `gym_scoped_macro_targets_${user.id}_v1` : '';
+  const defaultGoalsCacheKey = user ? `gym_user_goals_${user.id}_v1` : '';
 
   const [ingredients, setIngredients] = useState<Ingredient[]>([]);
   const [savedMeals, setSavedMeals] = useState<SavedMeal[]>([]);
   const [foodLogs, setFoodLogs] = useState<FoodLog[]>([]);
-  const [goals, setGoals] = useState<Omit<UserGoals, 'id' | 'user_id' | 'updated_at'>>(DEFAULT_GOALS);
+  const [defaultGoals, setDefaultGoals] =
+    useState<Omit<UserGoals, 'id' | 'user_id' | 'updated_at'>>(DEFAULT_GOALS);
+  const [scopedTargets, setScopedTargets] = useState<ScopedTargetsMap>(EMPTY_SCOPED_TARGETS);
   const [loading, setLoading] = useState(true);
 
   const loadDietData = useCallback(async () => {
@@ -47,15 +85,20 @@ export function useDiet() {
       return;
     }
 
-    const [cachedIngredients, cachedMeals, cachedLogs] = await Promise.all([
-      getCachedJson<Ingredient[]>('gym_ingredients_v1'),
-      getCachedJson<SavedMeal[]>('gym_saved_meals_v1'),
-      getCachedJson<FoodLog[]>(`gym_food_logs_${today}_v1`),
-    ]);
+    const [cachedIngredients, cachedMeals, cachedLogs, cachedGoals, cachedScoped] =
+      await Promise.all([
+        getCachedJson<Ingredient[]>('gym_ingredients_v1'),
+        getCachedJson<SavedMeal[]>('gym_saved_meals_v1'),
+        getCachedJson<FoodLog[]>(`gym_food_logs_${today}_v1`),
+        getCachedJson<Omit<UserGoals, 'id' | 'user_id' | 'updated_at'>>(defaultGoalsCacheKey),
+        getCachedJson<ScopedTargetsMap>(scopedCacheKey),
+      ]);
 
     if (cachedIngredients) setIngredients(cachedIngredients);
     if (cachedMeals) setSavedMeals(cachedMeals);
-    if (cachedLogs) setFoodLogs(cachedLogs);
+    setFoodLogs(cachedLogs ?? []);
+    if (cachedGoals) setDefaultGoals(cachedGoals);
+    if (cachedScoped) setScopedTargets(cachedScoped);
 
     try {
       const [{ data: ingData }, { data: mealData }, { data: logData }, { data: goalData }] =
@@ -88,14 +131,15 @@ export function useDiet() {
         setCachedJson(`gym_food_logs_${today}_v1`, logData);
       }
       if (goalData) {
-        setGoals(goalData as UserGoals);
+        setDefaultGoals(goalData as UserGoals);
+        setCachedJson(defaultGoalsCacheKey, goalData);
       }
     } catch {
       // Fallback to cached data when offline
     } finally {
       setLoading(false);
     }
-  }, [today, user]);
+  }, [defaultGoalsCacheKey, scopedCacheKey, today, user]);
 
   useEffect(() => {
     void (async () => {
@@ -103,6 +147,37 @@ export function useDiet() {
       await loadDietData();
     })();
   }, [loadDietData]);
+
+  const weekKey = useMemo(() => getWeekKey(today), [today]);
+  const monthKey = useMemo(() => getMonthKey(today), [today]);
+
+  const { goals, activeTargetScope } = useMemo(() => {
+    const dayOverride = scopedTargets.day[today];
+    if (dayOverride) {
+      return {
+        goals: { ...defaultGoals, ...dayOverride },
+        activeTargetScope: 'day' as TargetScope,
+      };
+    }
+    const weekOverride = scopedTargets.week[weekKey];
+    if (weekOverride) {
+      return {
+        goals: { ...defaultGoals, ...weekOverride },
+        activeTargetScope: 'week' as TargetScope,
+      };
+    }
+    const monthOverride = scopedTargets.month[monthKey];
+    if (monthOverride) {
+      return {
+        goals: { ...defaultGoals, ...monthOverride },
+        activeTargetScope: 'month' as TargetScope,
+      };
+    }
+    return {
+      goals: defaultGoals,
+      activeTargetScope: 'default' as TargetScope,
+    };
+  }, [defaultGoals, monthKey, scopedTargets, today, weekKey]);
 
   const dailyTotals: MacroTotals = useMemo(
     () =>
@@ -233,23 +308,49 @@ export function useDiet() {
     return data as Ingredient;
   };
 
-  const updateMacroGoals = async (nextGoals: {
-    goal_mode: GoalMode;
-    target_calories: number;
-    target_protein_g: number;
-    target_carbs_g: number;
-    target_fat_g: number;
-  }) => {
+  const updateMacroGoals = async (
+    nextGoals: ScopedMacroTarget,
+    scope: TargetScope = 'default'
+  ) => {
     if (!user) return;
-    setGoals((prev) => ({ ...prev, ...nextGoals }));
-    await supabase.from('user_goals').upsert(
-      {
-        user_id: user.id,
-        ...nextGoals,
-        updated_at: new Date().toISOString(),
+    if (scope === 'default') {
+      const updated = { ...defaultGoals, ...nextGoals };
+      setDefaultGoals(updated);
+      setCachedJson(defaultGoalsCacheKey, updated);
+      await supabase.from('user_goals').upsert(
+        {
+          user_id: user.id,
+          ...nextGoals,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id' }
+      );
+      return;
+    }
+
+    const key = scope === 'day' ? today : scope === 'week' ? weekKey : monthKey;
+    const nextScoped: ScopedTargetsMap = {
+      ...scopedTargets,
+      [scope]: {
+        ...scopedTargets[scope],
+        [key]: nextGoals,
       },
-      { onConflict: 'user_id' }
-    );
+    };
+    setScopedTargets(nextScoped);
+    await setCachedJson(scopedCacheKey, nextScoped);
+  };
+
+  const clearScopedTarget = async (scope: 'day' | 'week' | 'month') => {
+    if (!user) return;
+    const key = scope === 'day' ? today : scope === 'week' ? weekKey : monthKey;
+    const nextBucket = { ...scopedTargets[scope] };
+    delete nextBucket[key];
+    const nextScoped: ScopedTargetsMap = {
+      ...scopedTargets,
+      [scope]: nextBucket,
+    };
+    setScopedTargets(nextScoped);
+    await setCachedJson(scopedCacheKey, nextScoped);
   };
 
   return {
@@ -257,6 +358,11 @@ export function useDiet() {
     savedMeals,
     foodLogs,
     goals,
+    defaultGoals,
+    activeTargetScope,
+    scopedTargets,
+    weekKey,
+    monthKey,
     dailyTotals,
     loading,
     refresh: loadDietData,
@@ -266,5 +372,6 @@ export function useDiet() {
     deleteSavedMeal,
     createCustomIngredient,
     updateMacroGoals,
+    clearScopedTarget,
   };
 }
