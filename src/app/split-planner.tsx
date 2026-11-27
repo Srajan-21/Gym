@@ -148,7 +148,7 @@ export default function SplitPlannerScreen() {
 
   const handleAddExercise = async (exerciseId: string) => {
     try {
-      const setsCount = Math.max(1, parseInt(targetSets, 10) || 3);
+      const setsCount = Math.min(3, Math.max(1, parseInt(targetSets, 10) || 3));
       const repsText = targetRepRange.trim() || '8-12';
       if (plannerMode === 'period') {
         if (!activePlan) {

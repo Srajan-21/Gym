@@ -148,7 +148,7 @@ export default function WorkoutScreen() {
   const plannedTargetSets = useMemo(() => {
     if (!currentEx || !todaySplit) return 3;
     const match = todaySplit.exercises.find((e) => e.exercise_id === currentEx.exercise_id);
-    return match?.target_sets ?? 3;
+    return Math.min(3, Math.max(1, match?.target_sets ?? 3));
   }, [currentEx, todaySplit]);
 
   const isAdHocCurrent = currentEx ? Boolean(adHocMap[currentEx.exercise_id]) : false;
@@ -430,7 +430,7 @@ export default function WorkoutScreen() {
             <View style={{ gap: 6 }}>
               {todaySplit?.exercises.map((item, idx) => (
                 <Text key={item.id} style={styles.listItem}>
-                  {idx + 1}. {item.exercise?.name ?? 'Exercise'} • {item.target_sets} sets
+                  {idx + 1}. {item.exercise?.name ?? 'Exercise'} • {Math.min(3, item.target_sets)} sets
                 </Text>
               ))}
             </View>

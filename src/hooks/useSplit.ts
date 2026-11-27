@@ -155,7 +155,7 @@ export function useSplit() {
       split_id: split.id,
       exercise_id: exerciseId,
       order_index: currentList.length,
-      target_sets: targetSets,
+      target_sets: Math.min(3, Math.max(1, targetSets)),
       target_rep_range: targetRepRange,
     });
 
@@ -277,7 +277,7 @@ export function useSplit() {
         split_id: `${planId}_${dayOfWeek}`,
         exercise_id: exerciseId,
         order_index: existing.exercises.length,
-        target_sets: targetSets,
+        target_sets: Math.min(3, Math.max(1, targetSets)),
         target_rep_range: targetRepRange,
         exercise: exObj,
       };
